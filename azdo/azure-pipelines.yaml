@@ -20,4 +20,9 @@ stages:
           # Login to Azure 
           echo "az login --service-principal --username $(SP_APP_ID) --password $(SP_PASS) --tenant $(SP_TENANT)"
           az login --service-principal --username "$(SP_APP_ID)" --password "$(SP_PASS)" --tenant "$(SP_TENANT)"
-      displayName: 'Azure Login'
+        displayName: 'Azure Login'
+      - script: |
+          # Docker
+          export IMAGE_TAG=$(echo $(Build.BuildNumber) | tr / - | tr . - | tr _ - )
+          az acr build -r andrebriggs --image $(SERVICE)-master:$IMAGE_TAG . --build-arg SERVICE=$(SERVICE)
+        displayName: 'Docker build'
