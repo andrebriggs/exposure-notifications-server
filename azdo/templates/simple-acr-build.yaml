@@ -1,10 +1,6 @@
-# - name: buildArgs
-#   type: object
-#   default: []
+parameters:
 - name: imageName
   type: string
-# - name: imageTag
-#   type: string
 
 steps:
 - script: |-
