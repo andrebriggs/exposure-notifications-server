@@ -9,22 +9,16 @@ variables:
     value: cleanup-export
 
 stages:
-  - stage: build
+  - stage: docker-$(SERVICE)
+    dependsOn: build_test
     jobs:
-      - job: run_build_push_acr
-        pool:
-          vmImage: ubuntu-latest
-        steps:
-        - template: templates/azure-login.yml  # Template reference
-          parameters:
-            appId: $(SP_APP_ID)
-            password: $(SP_PASS)
-            tenantId: $(SP_TENANT)
-        - template: templates/container-build-strategy.yml  # Template reference
-          parameters:
-            downloadTools: false
-            imageRepoType: ACR
-            imageName: "$(SERVICE)-$(Build.SourceBranchName)"
-            imageTag: $(Build.BuildNumber)
-            buildArgs:
-            - SERVICE
+    - job: build-push-$(SERVICE)
+      pool:
+        vmImage: 'Ubuntu 16.04'
+      steps:
+      - script: echo $(SERVICE)!
+      - script: |
+        # Login to Azure 
+        echo "az login --service-principal --username $(SP_APP_ID) --password $(SP_PASS) --tenant $(SP_TENANT)"
+        az login --service-principal --username "$(SP_APP_ID)" --password "$(SP_PASS)" --tenant "$(SP_TENANT)"
+      displayName: 'Azure Login'
