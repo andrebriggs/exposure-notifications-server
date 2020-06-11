@@ -9,10 +9,10 @@ variables:
     value: cleanup-export
 
 stages:
-  - stage: docker-$(SERVICE)
+  - stage: docker-cleanup-export
     dependsOn: build_test
     jobs:
-    - job: build-push-$(SERVICE)
+    - job: build-push-cleanup-export
       pool:
         vmImage: 'Ubuntu 16.04'
       steps:
