@@ -1,0 +1,30 @@
+
+# File: azure-pipelines.yml
+trigger:
+- master
+
+variables:
+  - group: quick-start-vg
+  - name: SERVICE
+    value: cleanup-export
+
+stages:
+  - stage: build
+    jobs:
+      - job: run_build_push_acr
+        pool:
+          vmImage: ubuntu-latest
+        steps:
+        - template: templates/azure-login.yml  # Template reference
+          parameters:
+            appId: $(SP_APP_ID)
+            password: $(SP_PASS)
+            tenantId: $(SP_TENANT)
+        - template: templates/container-build-strategy.yml  # Template reference
+          parameters:
+            downloadTools: false
+            imageRepoType: ACR
+            imageName: "$(SERVICE)-$(Build.SourceBranchName)"
+            imageTag: $(Build.BuildNumber)
+            buildArgs:
+            - SERVICE
