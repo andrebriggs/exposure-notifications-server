@@ -1,7 +1,7 @@
 
 # File: azure-pipelines.yml
 trigger:
-- master
+- azdo
 
 variables:
   - group: quick-start-vg
@@ -10,6 +10,7 @@ variables:
 
 stages:
   - stage: docker_cleanup_export
+    dependsOn: []
     jobs:
     - job: build_push_cleanup_export
       pool:
@@ -28,6 +29,7 @@ stages:
         displayName: 'Docker build'
 
   - stage: docker_exposure
+    dependsOn: []
     jobs:
     - job: build_push_exposure
       pool:
