@@ -10,7 +10,6 @@ variables:
 
 stages:
   - stage: docker_cleanup_export
-    dependsOn: build_test
     jobs:
     - job: build_push_cleanup_export
       pool:
