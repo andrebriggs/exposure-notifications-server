@@ -7,13 +7,13 @@ variables:
   - group: quick-start-vg
 
 stages:
-  - stage: docker_cleanup_export
+  - stage: cleanup_export
     variables:
       - name: SERVICE_NAME
         value: cleanup-export
     dependsOn: []
     jobs:
-    - job: build_push_cleanup_export
+    - job: build_push_acr
       pool:
         vmImage: 'Ubuntu 16.04'
       steps:
@@ -27,21 +27,122 @@ stages:
         parameters:
           imageName: $(SERVICE_NAME)
 
-  # - stage: docker_exposure
-  #   dependsOn: []
-  #   jobs:
-  #   - job: build_push_exposure
-  #     pool:
-  #       vmImage: 'Ubuntu 16.04'
-  #     steps:
-  #     - script: echo exposure!
-  #     - template: templates/azure-login.yml  # Template reference
-  #       parameters:
-  #         appId: $(SP_APP_ID)
-  #         password: $(SP_PASS)
-  #         tenantId: $(SP_TENANT)
-  #     - script: |
-  #         # Docker
-  #         export IMAGE_TAG=$(echo $(Build.BuildNumber) | tr / - | tr . - | tr _ - )
-  #         az acr build -r andrebriggs --image exposure-master:$IMAGE_TAG . --build-arg SERVICE=exposure
-  #       displayName: 'Docker build'
+  - stage: cleanup_exposure
+    variables:
+      - name: SERVICE_NAME
+        value: cleanup-exposure
+    dependsOn: []
+    jobs:
+    - job: build_push_acr
+      pool:
+        vmImage: 'Ubuntu 16.04'
+      steps:
+      - script: echo $(SERVICE_NAME)!
+      - template: templates/azure-login.yml  # Template reference
+        parameters:
+          appId: $(SP_APP_ID)
+          password: $(SP_PASS)
+          tenantId: $(SP_TENANT)
+      - template: templates/simple-acr-build.yaml  # Template reference
+        parameters:
+          imageName: $(SERVICE_NAME)
+
+  - stage: exposure
+    variables:
+      - name: SERVICE_NAME
+        value: exposure
+    dependsOn: []
+    jobs:
+    - job: build_push_acr
+      pool:
+        vmImage: 'Ubuntu 16.04'
+      steps:
+      - script: echo $(SERVICE_NAME)!
+      - template: templates/azure-login.yml  # Template reference
+        parameters:
+          appId: $(SP_APP_ID)
+          password: $(SP_PASS)
+          tenantId: $(SP_TENANT)
+      - template: templates/simple-acr-build.yaml  # Template reference
+        parameters:
+          imageName: $(SERVICE_NAME)
+
+  - stage: export
+    variables:
+      - name: SERVICE_NAME
+        value: export
+    dependsOn: []
+    jobs:
+    - job: build_push_acr
+      pool:
+        vmImage: 'Ubuntu 16.04'
+      steps:
+      - script: echo $(SERVICE_NAME)!
+      - template: templates/azure-login.yml  # Template reference
+        parameters:
+          appId: $(SP_APP_ID)
+          password: $(SP_PASS)
+          tenantId: $(SP_TENANT)
+      - template: templates/simple-acr-build.yaml  # Template reference
+        parameters:
+          imageName: $(SERVICE_NAME)
+
+  - stage: generate
+    variables:
+      - name: SERVICE_NAME
+        value: generate
+    dependsOn: []
+    jobs:
+    - job: build_push_acr
+      pool:
+        vmImage: 'Ubuntu 16.04'
+      steps:
+      - script: echo $(SERVICE_NAME)!
+      - template: templates/azure-login.yml  # Template reference
+        parameters:
+          appId: $(SP_APP_ID)
+          password: $(SP_PASS)
+          tenantId: $(SP_TENANT)
+      - template: templates/simple-acr-build.yaml  # Template reference
+        parameters:
+          imageName: $(SERVICE_NAME)
+
+  - stage: federationin
+    variables:
+      - name: SERVICE_NAME
+        value: federationin
+    dependsOn: []
+    jobs:
+    - job: build_push_acr
+      pool:
+        vmImage: 'Ubuntu 16.04'
+      steps:
+      - script: echo $(SERVICE_NAME)!
+      - template: templates/azure-login.yml  # Template reference
+        parameters:
+          appId: $(SP_APP_ID)
+          password: $(SP_PASS)
+          tenantId: $(SP_TENANT)
+      - template: templates/simple-acr-build.yaml  # Template reference
+        parameters:
+          imageName: $(SERVICE_NAME)
+
+  - stage: federationout
+    variables:
+      - name: SERVICE_NAME
+        value: federationout
+    dependsOn: []
+    jobs:
+    - job: build_push_acr
+      pool:
+        vmImage: 'Ubuntu 16.04'
+      steps:
+      - script: echo $(SERVICE_NAME)!
+      - template: templates/azure-login.yml  # Template reference
+        parameters:
+          appId: $(SP_APP_ID)
+          password: $(SP_PASS)
+          tenantId: $(SP_TENANT)
+      - template: templates/simple-acr-build.yaml  # Template reference
+        parameters:
+          imageName: $(SERVICE_NAME)
