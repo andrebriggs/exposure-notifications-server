@@ -1,0 +1,21 @@
+# - name: buildArgs
+#   type: object
+#   default: []
+- name: imageName
+  type: string
+# - name: imageTag
+#   type: string
+
+steps:
+- script: |-
+    echo imageName: ${{ parameters.imageName }}
+    echo imageTag: ${{ parameters.imageTag }}
+    echo $(System.DefaultWorkingDirectory)
+  failOnStderr: true
+  displayName: Debugging messages
+- script: |
+    # Docker
+    export BRANCH_NAME=$(echo $(Build.SourceBranchName) | tr / - | tr . - | tr _ - )
+    export IMAGE_TAG=$(echo $(Build.BuildNumber) | tr / - | tr . - | tr _ - )
+    az acr build -r andrebriggs --image ${{ parameters.imageName }}-$BRANCH_NAME:$IMAGE_TAG . --build-arg SERVICE=${{ parameters.imageName }}
+displayName: 'Docker build'

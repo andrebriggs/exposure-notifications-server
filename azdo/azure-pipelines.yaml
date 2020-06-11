@@ -5,44 +5,43 @@ trigger:
 
 variables:
   - group: quick-start-vg
-  - name: SERVICE
-    value: cleanup-export
 
 stages:
   - stage: docker_cleanup_export
+    variables:
+      - name: SERVICE_NAME
+        value: cleanup-export
     dependsOn: []
     jobs:
     - job: build_push_cleanup_export
       pool:
         vmImage: 'Ubuntu 16.04'
       steps:
-      - script: echo $(SERVICE)!
-      - script: |
-          # Login to Azure 
-          echo "az login --service-principal --username $(SP_APP_ID) --password $(SP_PASS) --tenant $(SP_TENANT)"
-          az login --service-principal --username "$(SP_APP_ID)" --password "$(SP_PASS)" --tenant "$(SP_TENANT)"
-        displayName: 'Azure Login'
-      - script: |
-          # Docker
-          export IMAGE_TAG=$(echo $(Build.BuildNumber) | tr / - | tr . - | tr _ - )
-          az acr build -r andrebriggs --image $(SERVICE)-master:$IMAGE_TAG . --build-arg SERVICE=$(SERVICE)
-        displayName: 'Docker build'
+      - script: echo $(SERVICE_NAME)!
+      - template: templates/azure-login.yml  # Template reference
+        parameters:
+          appId: $(SP_APP_ID)
+          password: $(SP_PASS)
+          tenantId: $(SP_TENANT)
+      - template: templates/simple-acr-build.yaml  # Template reference
+        parameters:
+          imageName: $(SERVICE_NAME)
 
-  - stage: docker_exposure
-    dependsOn: []
-    jobs:
-    - job: build_push_exposure
-      pool:
-        vmImage: 'Ubuntu 16.04'
-      steps:
-      - script: echo exposure!
-      - script: |
-          # Login to Azure 
-          echo "az login --service-principal --username $(SP_APP_ID) --password $(SP_PASS) --tenant $(SP_TENANT)"
-          az login --service-principal --username "$(SP_APP_ID)" --password "$(SP_PASS)" --tenant "$(SP_TENANT)"
-        displayName: 'Azure Login'
-      - script: |
-          # Docker
-          export IMAGE_TAG=$(echo $(Build.BuildNumber) | tr / - | tr . - | tr _ - )
-          az acr build -r andrebriggs --image exposure-master:$IMAGE_TAG . --build-arg SERVICE=exposure
-        displayName: 'Docker build'
+  # - stage: docker_exposure
+  #   dependsOn: []
+  #   jobs:
+  #   - job: build_push_exposure
+  #     pool:
+  #       vmImage: 'Ubuntu 16.04'
+  #     steps:
+  #     - script: echo exposure!
+  #     - template: templates/azure-login.yml  # Template reference
+  #       parameters:
+  #         appId: $(SP_APP_ID)
+  #         password: $(SP_PASS)
+  #         tenantId: $(SP_TENANT)
+  #     - script: |
+  #         # Docker
+  #         export IMAGE_TAG=$(echo $(Build.BuildNumber) | tr / - | tr . - | tr _ - )
+  #         az acr build -r andrebriggs --image exposure-master:$IMAGE_TAG . --build-arg SERVICE=exposure
+  #       displayName: 'Docker build'
