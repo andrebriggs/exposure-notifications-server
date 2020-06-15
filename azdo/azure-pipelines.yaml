@@ -26,6 +26,7 @@ stages:
       - template: templates/simple-acr-build.yaml  # Template reference
         parameters:
           imageName: $(SERVICE_NAME)
+          acrName: $(ACR_NAME)
 
   - stage: cleanup_exposure
     variables:
@@ -46,6 +47,7 @@ stages:
       - template: templates/simple-acr-build.yaml  # Template reference
         parameters:
           imageName: $(SERVICE_NAME)
+          acrName: $(ACR_NAME)
 
   - stage: exposure
     variables:
@@ -66,6 +68,7 @@ stages:
       - template: templates/simple-acr-build.yaml  # Template reference
         parameters:
           imageName: $(SERVICE_NAME)
+          acrName: $(ACR_NAME)
 
   - stage: export
     variables:
@@ -86,6 +89,7 @@ stages:
       - template: templates/simple-acr-build.yaml  # Template reference
         parameters:
           imageName: $(SERVICE_NAME)
+          acrName: $(ACR_NAME)
 
   - stage: generate
     variables:
@@ -106,6 +110,7 @@ stages:
       - template: templates/simple-acr-build.yaml  # Template reference
         parameters:
           imageName: $(SERVICE_NAME)
+          acrName: $(ACR_NAME)
 
   - stage: federationin
     variables:
@@ -126,6 +131,7 @@ stages:
       - template: templates/simple-acr-build.yaml  # Template reference
         parameters:
           imageName: $(SERVICE_NAME)
+          acrName: $(ACR_NAME)
 
   - stage: federationout
     variables:
@@ -146,3 +152,4 @@ stages:
       - template: templates/simple-acr-build.yaml  # Template reference
         parameters:
           imageName: $(SERVICE_NAME)
+          acrName: $(ACR_NAME)
