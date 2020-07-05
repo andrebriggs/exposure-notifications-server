@@ -16,108 +16,116 @@ package setup_test
 
 import (
 	"context"
+	"io/ioutil"
+	"os"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/google/exposure-notifications-server/internal/authorizedapp"
 	"github.com/google/exposure-notifications-server/internal/database"
-	"github.com/google/exposure-notifications-server/internal/secrets"
+	"github.com/google/exposure-notifications-server/internal/observability"
 	"github.com/google/exposure-notifications-server/internal/setup"
-	"github.com/google/exposure-notifications-server/internal/signing"
 	"github.com/google/exposure-notifications-server/internal/storage"
+	"github.com/google/exposure-notifications-server/pkg/keys"
+	"github.com/google/exposure-notifications-server/pkg/secrets"
+	"github.com/sethvargo/go-envconfig/pkg/envconfig"
 )
 
-type testDatabaseConfig struct {
-	database *database.Config
+var _ setup.AuthorizedAppConfigProvider = (*testConfig)(nil)
+var _ setup.BlobstoreConfigProvider = (*testConfig)(nil)
+var _ setup.DatabaseConfigProvider = (*testConfig)(nil)
+var _ setup.KeyManagerConfigProvider = (*testConfig)(nil)
+var _ setup.SecretManagerConfigProvider = (*testConfig)(nil)
+var _ setup.ObservabilityExporterConfigProvider = (*testConfig)(nil)
+
+type testConfig struct {
+	Database   *database.Config
+	Secret     string `env:"MY_SECRET"`
+	SecretFile string `env:"MY_SECRET_FILE"`
 }
 
-func (t *testDatabaseConfig) DatabaseConfig() *database.Config {
-	return t.database
-}
-
-func (t *testDatabaseConfig) SecretManagerConfig() *secrets.Config {
-	return &secrets.Config{
-		SecretManagerType: secrets.SecretManagerType("NOOP"),
-		SecretCacheTTL:    10 * time.Minute,
+func (t *testConfig) AuthorizedAppConfig() *authorizedapp.Config {
+	return &authorizedapp.Config{
+		// TODO: type
+		CacheDuration: 10 * time.Minute,
 	}
 }
 
-type testSecretManagerConfig struct {
-	database *database.Config
-}
-
-func (t *testSecretManagerConfig) DatabaseConfig() *database.Config {
-	return t.database
-}
-
-func (t *testSecretManagerConfig) SecretManagerConfig() *secrets.Config {
-	return &secrets.Config{
-		SecretManagerType: secrets.SecretManagerType("NOOP"),
-		SecretCacheTTL:    10 * time.Minute,
-	}
-}
-
-type testKeyManagerConfig struct {
-	database *database.Config
-}
-
-func (t *testKeyManagerConfig) DatabaseConfig() *database.Config {
-	return t.database
-}
-
-func (t *testKeyManagerConfig) KeyManagerConfig() *signing.Config {
-	return &signing.Config{
-		KeyManagerType: signing.KeyManagerType("NOOP"),
-	}
-}
-
-func (t *testKeyManagerConfig) SecretManagerConfig() *secrets.Config {
-	return &secrets.Config{
-		SecretManagerType: secrets.SecretManagerType("NOOP"),
-		SecretCacheTTL:    time.Nanosecond,
-	}
-}
-
-type testBlobstoreConfig struct {
-	database *database.Config
-}
-
-func (t *testBlobstoreConfig) DatabaseConfig() *database.Config {
-	return t.database
-}
-
-func (t *testBlobstoreConfig) BlobstoreConfig() *storage.Config {
+func (t *testConfig) BlobstoreConfig() *storage.Config {
 	return &storage.Config{
 		BlobstoreType: storage.BlobstoreType("NOOP"),
 	}
 }
 
-type testAuthorizedAppConfig struct {
-	database *database.Config
+func (t *testConfig) DatabaseConfig() *database.Config {
+	return t.Database
 }
 
-func (t *testAuthorizedAppConfig) DatabaseConfig() *database.Config {
-	return t.database
+func (t *testConfig) KeyManagerConfig() *keys.Config {
+	return &keys.Config{
+		KeyManagerType: keys.KeyManagerType("NOOP"),
+	}
 }
 
-func (t *testAuthorizedAppConfig) AuthorizedAppConfig() *authorizedapp.Config {
-	return &authorizedapp.Config{}
+func (t *testConfig) SecretManagerConfig() *secrets.Config {
+	return &secrets.Config{
+		SecretManagerType: secrets.SecretManagerType("NOOP"),
+		SecretCacheTTL:    10 * time.Minute,
+	}
 }
 
-func TestSetup(t *testing.T) {
+func (t *testConfig) ObservabilityExporterConfig() *observability.Config {
+	return &observability.Config{
+		ExporterType: observability.ExporterType("NOOP"),
+	}
+}
+
+func TestSetupWith(t *testing.T) {
 	t.Parallel()
+
+	tmp, err := ioutil.TempDir("", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.RemoveAll(tmp)
+
+	lookuper := envconfig.MapLookuper(map[string]string{
+		"SECRETS_DIR":    tmp,
+		"MY_SECRET":      "secret://foo",
+		"MY_SECRET_FILE": "secret://foo?target=file",
+	})
 
 	t.Run("default", func(t *testing.T) {
 		t.Parallel()
 
 		ctx := context.Background()
 		_, dbconfig := database.NewTestDatabaseWithConfig(t)
-		config := &testDatabaseConfig{database: dbconfig}
-		env, done, err := setup.Setup(ctx, config)
+
+		config := &testConfig{Database: dbconfig}
+		env, err := setup.SetupWith(ctx, config, lookuper)
 		if err != nil {
 			t.Fatal(err)
 		}
-		defer done()
+		defer env.Close(ctx)
+
+		if got, want := config.Secret, "noop-secret"; got != want {
+			t.Errorf("expected %v to be %v", got, want)
+		}
+	})
+
+	t.Run("database", func(t *testing.T) {
+		t.Parallel()
+
+		ctx := context.Background()
+		_, dbconfig := database.NewTestDatabaseWithConfig(t)
+
+		config := &testConfig{Database: dbconfig}
+		env, err := setup.SetupWith(ctx, config, lookuper)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer env.Close(ctx)
 
 		db := env.Database()
 		if db == nil {
@@ -125,47 +133,26 @@ func TestSetup(t *testing.T) {
 		}
 	})
 
-	t.Run("secret_manager", func(t *testing.T) {
+	t.Run("authorizedapp", func(t *testing.T) {
 		t.Parallel()
 
 		ctx := context.Background()
 		_, dbconfig := database.NewTestDatabaseWithConfig(t)
-		config := &testSecretManagerConfig{database: dbconfig}
-		env, done, err := setup.Setup(ctx, config)
+
+		config := &testConfig{Database: dbconfig}
+		env, err := setup.SetupWith(ctx, config, lookuper)
 		if err != nil {
 			t.Fatal(err)
 		}
-		defer done()
+		defer env.Close(ctx)
 
-		sm := env.SecretManager()
-		if sm == nil {
-			t.Errorf("expected secret manager to exist")
+		ap := env.AuthorizedAppProvider()
+		if ap == nil {
+			t.Errorf("expected appprovider to exist")
 		}
 
-		if _, ok := sm.(*secrets.Cacher); !ok {
-			t.Errorf("expected %T to be Cacher", sm)
-		}
-	})
-
-	t.Run("key_manager", func(t *testing.T) {
-		t.Parallel()
-
-		ctx := context.Background()
-		_, dbconfig := database.NewTestDatabaseWithConfig(t)
-		config := &testKeyManagerConfig{database: dbconfig}
-		env, done, err := setup.Setup(ctx, config)
-		if err != nil {
-			t.Fatal(err)
-		}
-		defer done()
-
-		km := env.KeyManager()
-		if km == nil {
-			t.Errorf("expected key manager to exist")
-		}
-
-		if _, ok := km.(*signing.Noop); !ok {
-			t.Errorf("expected %T to be Noop", km)
+		if _, ok := ap.(*authorizedapp.DatabaseProvider); !ok {
+			t.Errorf("expected %T to be DatabaseProvider", ap)
 		}
 	})
 
@@ -174,12 +161,13 @@ func TestSetup(t *testing.T) {
 
 		ctx := context.Background()
 		_, dbconfig := database.NewTestDatabaseWithConfig(t)
-		config := &testBlobstoreConfig{database: dbconfig}
-		env, done, err := setup.Setup(ctx, config)
+
+		config := &testConfig{Database: dbconfig}
+		env, err := setup.SetupWith(ctx, config, lookuper)
 		if err != nil {
 			t.Fatal(err)
 		}
-		defer done()
+		defer env.Close(ctx)
 
 		bs := env.Blobstore()
 		if bs == nil {
@@ -191,25 +179,80 @@ func TestSetup(t *testing.T) {
 		}
 	})
 
-	t.Run("authorizedapp", func(t *testing.T) {
+	t.Run("key_manager", func(t *testing.T) {
 		t.Parallel()
 
 		ctx := context.Background()
 		_, dbconfig := database.NewTestDatabaseWithConfig(t)
-		config := &testAuthorizedAppConfig{database: dbconfig}
-		env, done, err := setup.Setup(ctx, config)
+
+		config := &testConfig{Database: dbconfig}
+		env, err := setup.SetupWith(ctx, config, lookuper)
 		if err != nil {
 			t.Fatal(err)
 		}
-		defer done()
+		defer env.Close(ctx)
 
-		ap := env.AuthorizedAppProvider()
-		if ap == nil {
-			t.Errorf("expected appprovider to exist")
+		km := env.KeyManager()
+		if km == nil {
+			t.Errorf("expected key manager to exist")
 		}
 
-		if _, ok := ap.(*authorizedapp.DatabaseProvider); !ok {
-			t.Errorf("expected %T to be DatabaseProvider", ap)
+		if _, ok := km.(*keys.Noop); !ok {
+			t.Errorf("expected %T to be Noop", km)
+		}
+	})
+
+	t.Run("secret_manager", func(t *testing.T) {
+		t.Parallel()
+
+		ctx := context.Background()
+		_, dbconfig := database.NewTestDatabaseWithConfig(t)
+
+		config := &testConfig{Database: dbconfig}
+		env, err := setup.SetupWith(ctx, config, lookuper)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer env.Close(ctx)
+
+		sm := env.SecretManager()
+		if sm == nil {
+			t.Errorf("expected secret manager to exist")
+		}
+
+		if _, ok := sm.(*secrets.Cacher); !ok {
+			t.Errorf("expected %T to be Cacher", sm)
+		}
+
+		if got, want := config.Secret, "noop-secret"; got != want {
+			t.Errorf("expected %v to be %v", got, want)
+		}
+
+		if got, want := config.SecretFile, tmp; !strings.Contains(got, want) {
+			t.Errorf("expected %v to contain %v", got, want)
+		}
+	})
+
+	t.Run("observability_exporter", func(t *testing.T) {
+		t.Parallel()
+
+		ctx := context.Background()
+		_, dbconfig := database.NewTestDatabaseWithConfig(t)
+
+		config := &testConfig{Database: dbconfig}
+		env, err := setup.SetupWith(ctx, config, lookuper)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer env.Close(ctx)
+
+		oe := env.ObservabilityExporter()
+		if oe == nil {
+			t.Errorf("expected observability exporter to exist")
+		}
+
+		if _, ok := oe.(*observability.NoopExporter); !ok {
+			t.Errorf("expected %T to be GenericExporter", oe)
 		}
 	})
 }

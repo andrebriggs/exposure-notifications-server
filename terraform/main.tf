@@ -35,6 +35,7 @@ resource "google_project_service" "services" {
   for_each = toset([
     "cloudbuild.googleapis.com",
     "cloudkms.googleapis.com",
+    "cloudresourcemanager.googleapis.com",
     "cloudscheduler.googleapis.com",
     "compute.googleapis.com",
     "containerregistry.googleapis.com",
@@ -74,11 +75,12 @@ resource "google_service_networking_connection" "private_vpc_connection" {
 }
 
 resource "google_vpc_access_connector" "connector" {
-  project       = data.google_project.project.project_id
-  name          = "serverless-vpc-connector"
-  region        = var.network_location
-  network       = "default"
-  ip_cidr_range = "10.8.0.0/28"
+  project        = data.google_project.project.project_id
+  name           = "serverless-vpc-connector"
+  region         = var.network_location
+  network        = "default"
+  ip_cidr_range  = "10.8.0.0/28"
+  max_throughput = var.vpc_access_connector_max_throughput
 
   depends_on = [
     google_project_service.services["compute.googleapis.com"],
@@ -168,6 +170,14 @@ resource "google_app_engine_application" "app" {
   location_id = var.appengine_location
 }
 
+output "project_id" {
+  value = data.google_project.project.project_id
+}
+
+output "project_number" {
+  value = data.google_project.project.number
+}
+
 output "region" {
   value = var.region
 }
@@ -198,8 +208,4 @@ output "cloudrun_location" {
 
 output "storage_location" {
   value = var.storage_location
-}
-
-output "project" {
-  value = data.google_project.project.project_id
 }

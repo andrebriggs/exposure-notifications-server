@@ -12,6 +12,17 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+// Package verification provides verification utilities.
+//
+// This is provided as reference to application authors wishing to calculate
+// the exposure key HMAC as part of their exposure notifications mobile app.
+//
+// This protocol is detailed at
+// https://developers.google.com/android/exposure-notifications/verification-system
+//
+// Although exported, this package is non intended for general consumption.
+// It is a shared dependency between multiple exposure notifications projects.
+// We cannot guarantee that there won't be breaking changes in the future.
 package verification
 
 import (

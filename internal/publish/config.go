@@ -20,31 +20,34 @@ import (
 
 	"github.com/google/exposure-notifications-server/internal/authorizedapp"
 	"github.com/google/exposure-notifications-server/internal/database"
-	"github.com/google/exposure-notifications-server/internal/secrets"
+	"github.com/google/exposure-notifications-server/internal/observability"
 	"github.com/google/exposure-notifications-server/internal/setup"
+	"github.com/google/exposure-notifications-server/internal/verification"
+	"github.com/google/exposure-notifications-server/pkg/secrets"
 )
 
 // Compile-time check to assert this config matches requirements.
 var _ setup.AuthorizedAppConfigProvider = (*Config)(nil)
 var _ setup.DatabaseConfigProvider = (*Config)(nil)
 var _ setup.SecretManagerConfigProvider = (*Config)(nil)
+var _ setup.ObservabilityExporterConfigProvider = (*Config)(nil)
 
 // Config represents the configuration and associated environment variables for
 // the publish components.
 type Config struct {
-	AuthorizedApp authorizedapp.Config
-	Database      database.Config
-	SecretManager secrets.Config
+	AuthorizedApp         authorizedapp.Config
+	Database              database.Config
+	SecretManager         secrets.Config
+	Verification          verification.Config
+	ObservabilityExporter observability.Config
 
-	Port               string        `envconfig:"PORT" default:"8080"`
-	MinRequestDuration time.Duration `envconfig:"TARGET_REQUEST_DURATION" default:"5s"`
-	MaxKeysOnPublish   int           `envconfig:"MAX_KEYS_ON_PUBLISH" default:"15"`
-	MaxIntervalAge     time.Duration `envconfig:"MAX_INTERVAL_AGE_ON_PUBLISH" default:"360h"`
-	TruncateWindow     time.Duration `envconfig:"TRUNCATE_WINDOW" default:"1h"`
+	Port             string        `env:"PORT, default=8080"`
+	MaxKeysOnPublish int           `env:"MAX_KEYS_ON_PUBLISH, default=15"`
+	MaxIntervalAge   time.Duration `env:"MAX_INTERVAL_AGE_ON_PUBLISH, default=360h"`
+	TruncateWindow   time.Duration `env:"TRUNCATE_WINDOW, default=1h"`
 
 	// Flags for local development and testing.
-	DebugAPIResponses   bool `envconfig:"DEBUG_API_RESPONSES"`
-	DebugAllowRestOfDay bool `envconfig:"DEBUG_ALLOW_REST_OF_DAY"`
+	DebugReleaseSameDayKeys bool `env:"DEBUG_RELEASE_SAME_DAY_KEYS"`
 }
 
 func (c *Config) AuthorizedAppConfig() *authorizedapp.Config {
@@ -57,4 +60,8 @@ func (c *Config) DatabaseConfig() *database.Config {
 
 func (c *Config) SecretManagerConfig() *secrets.Config {
 	return &c.SecretManager
+}
+
+func (c *Config) ObservabilityExporterConfig() *observability.Config {
+	return &c.ObservabilityExporter
 }

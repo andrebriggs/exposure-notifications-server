@@ -41,7 +41,7 @@ func (h *indexHandler) Execute(c *gin.Context) {
 
 	// Load authorized apps for index.
 	db := aadb.New(h.env.Database())
-	apps, err := db.GetAllAuthorizedApps(ctx, h.env.SecretManager())
+	apps, err := db.ListAuthorizedApps(ctx)
 	if err != nil {
 		admin.ErrorPage(c, err.Error())
 		return
@@ -74,7 +74,7 @@ func (h *indexHandler) Execute(c *gin.Context) {
 	}
 	m["siginfos"] = sigInfos
 
-	m.AddTitle("Exposure Notifications Server - Admin Console")
-	m.AddJumbotron("Exposure Notification Server", "Admin Console")
+	m.AddTitle("Exposure Notification Key Server - Admin Console")
+	m.AddJumbotron("Exposure Notification Key Server", "Admin Console")
 	c.HTML(http.StatusOK, "index", m)
 }

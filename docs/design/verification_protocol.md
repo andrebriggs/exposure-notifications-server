@@ -1,10 +1,14 @@
+---
+layout: default
+---
 # Public Health Authority Diagnosis Verification Protocol
 
-This design covers the exposure notifications server's ability to verify
+This design covers the exposure notification key server's ability to verify
 diagnosis certifications from public health authorities.
 
 The actual process of issuing these certificates is not covered in this
-document, but will be at a later date.
+document, but will be at a later date. A simple example of certificate signing
+is available in [tools/example-verification-signing](https://github.com/google/exposure-notifications-server/tree/main/tools/example-verification-signing)
 
 ## Motivation
 
@@ -28,16 +32,18 @@ health authority in the jurisdiction.
 
 1. App user is diagnosed with Covid-19. PHA issues a PIN code to the user.
 2. The user enters the PIN code on their App
-3. The app creates a HMAC value that combines the TEKs from the device along
+3. The App exchange the PIN for a claim check token and walks the user through
+   some health related questions (i.e. symptom onset date).
+4. The app creates a HMAC value that combines the TEKs from the device along
    with calculated transmission risk value, rolling period start and rolling
 	 period count values (the key data + metadata).
-	 These values are sent to the PHA server that issued the PIN.
-4. If the PIN is valid, the PHA issues a JWT that is signed using ECDSA over
+	 These values are sent to the PHA server along with the token from step 3.
+5. If the token is valid, the PHA issues a JWT that is signed using ECDSA over
    the P-256 elliptic curve with SHA-256 as a hash function. The JWT includes
    additional claims about the data (see below).
-5. The app on the user's device sends this signed JWT to the exposure
+6. The app on the user's device sends this signed JWT to the exposure
    notifications server (this project).
-6. If the JWT is valid and signed by a trusted PHA (verified because the public
+7. If the JWT is valid and signed by a trusted PHA (verified because the public
 	 key has been previously shared with the server), then the keys are imported
 	 into the server for distribution to other devices in the geography. Because
    we are using pre-shared public keys, this verification can be done with
@@ -45,7 +51,7 @@ health authority in the jurisdiction.
 
 ## JWT Verification + Accepted Claims
 
-The exposure notifications server will accept this JWT in the current
+The exposure notification key server will accept this JWT in the current
 `verificationPayload` field in the exposure reporting API. When this is present,
 device attestations should be disabled. In addition, the exposure publishing
 API will also accept a new field `hmackey` to be used as the key for
@@ -58,24 +64,28 @@ First, using the standard claims.
 * `iss` : The issuer will be used to determine which public key(s) are valid for
 verification. This is to allow for key rotation.
 * `aud` : The audience must be as configured for this installation of the
-exposure notifications server.
+exposure notification key server. The operator of the exposure notification key server
+is the one to define this value and should be shared to all participating health
+authorities.
 * `iat` : The unix timestamp at which the token was issued.
 * `exp` : The unix timestamp at which the token will expire.
 * `nbf` : If present, the "not before" timestamp will be honored.
 
 We also prescribe a set of private claims to transmit data from the PHA
-verification server to the exposure notifications server.
+verification server to the exposure notification key server.
 
 * `tekhmac` : The HMAC of the TEKs that was presented to the PHA verification
 server. This must be calculated in a specific way (see below).
 * `phadata` : Contains a map of claims for the PHA to communicate back
-to the mobile app and/or the exposure notifications server. This specific
-implementation of the exposure notifications server will disregard and never
+to the mobile app and/or the exposure notification key server. This specific
+implementation of the exposure notification key server will disregard and never
 save the `phadata`
 * `trisk` : Contains an array of transmission risk overrides to enact when
 importing the associated keys. If data is present in this field, it will
 override the data in the upload from the device.
-* `keyVersion` : The version of the public key to use for verification.
+
+The verification server can indicate a specific key ID to use by setting the
+`kid` header attribute in the JWT.
 
 ### Transmission Risk Overrides
 

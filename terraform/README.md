@@ -1,7 +1,7 @@
-# Starting the exposure notifications server
+# Starting the exposure notification key server
 
 This is a set of Terraform configurations which create the required
-infrastructure for an exposure notifications server on Google Cloud. Please note
+infrastructure for an exposure notification key server on Google Cloud. Please note
 that **Terraform is only used for the initial deployment and provisioning of
 underlying infrastructure!** It is not used for continuous delivery or
 continuous deployment.
@@ -21,7 +21,7 @@ continuous deployment.
 
 ## Instructions
 
-For full instructions on deploying, view the [deployment docs](../docs/deploying.md)
+For full instructions on deploying, view the [deployment docs](../docs/getting-started/deploying.md)
 
 1.  Create a GCP project.
     [Instructions](https://cloud.google.com/resource-manager/docs/creating-managing-projects).
@@ -50,7 +50,7 @@ For full instructions on deploying, view the [deployment docs](../docs/deploying
 1.  Save the project ID as a Terraform variable:
 
     ```text
-    $ echo "project = ${PROJECT_ID}" >> ./terraform.tfvars
+    $ echo "project = \"${PROJECT_ID}\"" >> ./terraform.tfvars
     ```
 
 1.  (Optional) Enable the data generation job. This is useful for testing
@@ -58,7 +58,7 @@ For full instructions on deploying, view the [deployment docs](../docs/deploying
     system.
 
     ```text
-    $ echo "create_generate_service = true" >> ./terraform.tfvars
+    $ echo 'generate_cron_schedule = "*/15 * * * *"' >> ./terraform.tfvars
     ```
 
 1.  (Optional, but recommended) Create a Cloud Storage bucket for storing remote
@@ -72,7 +72,7 @@ For full instructions on deploying, view the [deployment docs](../docs/deploying
     Configure Terraform to store state in the bucket:
 
     ```text
-    $ cat <<EOF > ./terraform/state.tf
+    $ cat <<EOF > ./state.tf
     terraform {
       backend "gcs" {
         bucket = "${PROJECT_ID}-tf-state"

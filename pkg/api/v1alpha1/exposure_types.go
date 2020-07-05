@@ -19,9 +19,6 @@ import "time"
 // The following constants are generally useful in implementations of this API
 // and for clients as well..
 const (
-	// 15 Days worth of keys is the maximum per publish request (inclusive)
-	MaxKeysPerPublish = 15
-
 	// only valid exposure key keyLength
 	KeyLength = 16
 
@@ -55,7 +52,7 @@ const (
 //  Note: This project doesn't directly include a diagnosis code verification System
 //        but does provide the ability to configure one in `serverevn.ServerEnv`
 //
-// The following fields are deprecated, but accepted for backwards-compatability:
+// The following fields are deprecated, but accepted for backwards-compatibility:
 // DeviceVerificationPayload: (attestation)
 // Platform: "ios" or "android"
 type Publish struct {

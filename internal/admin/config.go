@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-// This tool provides a small admin UI. Requires connection to the database
+// Package admin provides a small admin UI. Requires connection to the database
 // and permissions to access whatever else you might need to access.
 package admin
 
@@ -23,34 +23,34 @@ import (
 	"net/http"
 
 	"github.com/google/exposure-notifications-server/internal/database"
-	"github.com/google/exposure-notifications-server/internal/secrets"
 	"github.com/google/exposure-notifications-server/internal/setup"
-	"github.com/google/exposure-notifications-server/internal/signing"
 	"github.com/google/exposure-notifications-server/internal/storage"
+	"github.com/google/exposure-notifications-server/pkg/keys"
+	"github.com/google/exposure-notifications-server/pkg/secrets"
 )
 
+var _ setup.BlobstoreConfigProvider = (*Config)(nil)
 var _ setup.DatabaseConfigProvider = (*Config)(nil)
 var _ setup.KeyManagerConfigProvider = (*Config)(nil)
 var _ setup.SecretManagerConfigProvider = (*Config)(nil)
-var _ setup.BlobstoreConfigProvider = (*Config)(nil)
 
 type Config struct {
 	Database      database.Config
-	KeyManager    signing.Config
+	KeyManager    keys.Config
 	SecretManager secrets.Config
 	Storage       storage.Config
 
-	Port         string `envconfig:"PORT" default:"8080"`
-	TemplatePath string `envconfig:"TEMPLATE_DIR" default:"./tools/admin-console/templates"`
-	TopFile      string `envconfig:"TOP_FILE" default:"top"`
-	BotFile      string `envconfig:"BOTTOM_FILE" default:"bottom"`
+	Port         string `env:"PORT, default=8080"`
+	TemplatePath string `env:"TEMPLATE_DIR, default=./tools/admin-console/templates"`
+	TopFile      string `env:"TOP_FILE, default=top"`
+	BotFile      string `env:"BOTTOM_FILE, default=bottom"`
 }
 
 func (c *Config) DatabaseConfig() *database.Config {
 	return &c.Database
 }
 
-func (c *Config) KeyManagerConfig() *signing.Config {
+func (c *Config) KeyManagerConfig() *keys.Config {
 	return &c.KeyManager
 }
 

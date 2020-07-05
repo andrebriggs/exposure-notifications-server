@@ -35,7 +35,6 @@ import (
 	"github.com/google/exposure-notifications-server/internal/authorizedapp"
 	aadb "github.com/google/exposure-notifications-server/internal/authorizedapp/database"
 	aamodel "github.com/google/exposure-notifications-server/internal/authorizedapp/model"
-	"github.com/google/exposure-notifications-server/internal/base64util"
 	coredb "github.com/google/exposure-notifications-server/internal/database"
 	pubdb "github.com/google/exposure-notifications-server/internal/publish/database"
 	"github.com/google/exposure-notifications-server/internal/publish/model"
@@ -43,6 +42,7 @@ import (
 	"github.com/google/exposure-notifications-server/internal/util"
 	verdb "github.com/google/exposure-notifications-server/internal/verification/database"
 	vermodel "github.com/google/exposure-notifications-server/internal/verification/model"
+	"github.com/google/exposure-notifications-server/pkg/base64util"
 
 	verifyapi "github.com/google/exposure-notifications-server/pkg/api/v1alpha1"
 	utils "github.com/google/exposure-notifications-server/pkg/verification"
@@ -113,10 +113,10 @@ func issueJWT(t *testing.T, cfg jwtConfig) (jwtText, hmacKey string) {
 	claims.IssuedAt = time.Now().Add(cfg.JWTWarp).Unix()
 	claims.ExpiresAt = time.Now().Add(cfg.JWTWarp).Add(5 * time.Minute).Unix()
 	claims.SignedMAC = hmac
-	claims.KeyVersion = cfg.HealthAuthorityKey.Version
 	claims.TransmissionRisks = cfg.Overrides
 
 	token := jwt.NewWithClaims(jwt.SigningMethodES256, claims)
+	token.Header[verifyapi.KeyIDHeader] = cfg.HealthAuthorityKey.Version
 	jwtText, err = token.SignedString(cfg.Key)
 	if err != nil {
 		t.Fatal(err)
@@ -339,10 +339,8 @@ func TestPublishWithBypass(t *testing.T) {
 
 			// And set up publish handler up front.
 			config := Config{}
-			config.MinRequestDuration = time.Millisecond
 			config.AuthorizedApp.CacheDuration = time.Nanosecond
 			config.TruncateWindow = time.Second
-			config.DebugAPIResponses = true
 			config.MaxKeysOnPublish = 14
 			config.MaxIntervalAge = 14 * 24 * time.Hour
 			aaProvider, err := authorizedapp.NewDatabaseProvider(ctx, testDB, config.AuthorizedAppConfig())

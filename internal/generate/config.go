@@ -19,27 +19,30 @@ import (
 	"time"
 
 	"github.com/google/exposure-notifications-server/internal/database"
-	"github.com/google/exposure-notifications-server/internal/secrets"
+	"github.com/google/exposure-notifications-server/internal/observability"
 	"github.com/google/exposure-notifications-server/internal/setup"
+	"github.com/google/exposure-notifications-server/pkg/secrets"
 )
 
 // Compile-time check to assert this config matches requirements.
 var _ setup.DatabaseConfigProvider = (*Config)(nil)
 var _ setup.SecretManagerConfigProvider = (*Config)(nil)
+var _ setup.ObservabilityExporterConfigProvider = (*Config)(nil)
 
 // Config represents the configuration and associated environment variables for
 // the publish components.
 type Config struct {
-	Database      database.Config
-	SecretManager secrets.Config
+	Database              database.Config
+	SecretManager         secrets.Config
+	ObservabilityExporter observability.Config
 
-	Port             string        `envconfig:"PORT" default:"8080"`
-	NumExposures     int           `envconfig:"NUM_EXPOSURES_GENERATED" default:"10"`
-	KeysPerExposure  int           `envconfig:"KEYS_PER_EXPOSURE" default:"14"`
-	MaxKeysOnPublish int           `envconfig:"MAX_KEYS_ON_PUBLISH" default:"15"`
-	MaxIntervalAge   time.Duration `envconfig:"MAX_INTERVAL_AGE_ON_PUBLISH" default:"360h"`
-	TruncateWindow   time.Duration `envconfig:"TRUNCATE_WINDOW" default:"1h"`
-	DefaultRegion    string        `envconfig:"DEFAULT_REGOIN" default:"US"`
+	Port             string        `env:"PORT, default=8080"`
+	NumExposures     int           `env:"NUM_EXPOSURES_GENERATED, default=10"`
+	KeysPerExposure  int           `env:"KEYS_PER_EXPOSURE, default=14"`
+	MaxKeysOnPublish int           `env:"MAX_KEYS_ON_PUBLISH, default=15"`
+	MaxIntervalAge   time.Duration `env:"MAX_INTERVAL_AGE_ON_PUBLISH, default=360h"`
+	TruncateWindow   time.Duration `env:"TRUNCATE_WINDOW, default=1h"`
+	DefaultRegion    string        `env:"DEFAULT_REGOIN, default=US"`
 }
 
 func (c *Config) DatabaseConfig() *database.Config {
@@ -48,4 +51,8 @@ func (c *Config) DatabaseConfig() *database.Config {
 
 func (c *Config) SecretManagerConfig() *secrets.Config {
 	return &c.SecretManager
+}
+
+func (c *Config) ObservabilityExporterConfig() *observability.Config {
+	return &c.ObservabilityExporter
 }

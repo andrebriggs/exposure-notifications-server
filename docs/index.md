@@ -1,10 +1,13 @@
-# Exposure Notification Reference Server
+---
+layout: default
+---
+# Exposure Notification Reference Key Server
 
 [COVID‑19 Exposure Notifications API](https://www.google.com/covid19/exposurenotifications/)
 
 In our continued effort to help governments and health authorities during the
 COVID-19 pandemic, we have authored an open source reference implementation of
-an Exposure Notifications server.
+an Exposure Notification Key Server.
 
 The server reference in this repository implements the Exposure Notifications
 API and provides reference code for working with Android and iOS apps that
@@ -18,12 +21,12 @@ to get started quickly.
 
 ## Overview
 
-The Exposure Notification Server is responsible for the following functions:
+The Exposure Notification Key Server is responsible for the following functions:
 
 * Accepting the temporary exposure keys of affected users from mobile devices.
 
 * Validating the temporary exposure keys using a [configurable third-party
-  verification service](docs/design/verification_protocol.md).
+  verification service](design/verification_protocol.md).
 
 * Storing the temporary exposure keys in a database.
 
@@ -38,13 +41,14 @@ The Exposure Notification Server is responsible for the following functions:
 ## Tutorials and reference documentation
 
 You can read tutorials on deploying and using the reference Exposure Notification
-Server here:
+Key Server here:
 
-* [Deployment guide](deploying.md)
-* [Contributor guide](https://github.com/google/exposure-notifications-server/blob/master/CONTRIBUTING.md)
+* [Deployment guide](getting-started/deploying.md)
+* [Contributor guide](https://github.com/google/exposure-notifications-server/blob/main/CONTRIBUTING.md)
 * [Server Functional Requirements](server_functional_requirements.md)
 * [Server Deployment Options](server_deployment_options.md)
 * [Reference documentation](https://pkg.go.dev/mod/github.com/google/exposure-notifications-server)
+* [API Definitions](https://github.com/google/exposure-notifications-server/tree/main/pkg/api/v1alpha1)
 
 ## Issues and Questions
 
