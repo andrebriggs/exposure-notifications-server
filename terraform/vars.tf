@@ -93,6 +93,20 @@ variable "cloudsql_disk_size_gb" {
   description = "Size of the Cloud SQL disk, in GB."
 }
 
+variable "cloudsql_max_connections" {
+  type    = number
+  default = 100000
+
+  description = "Maximum number of allowed connections. If you change to a smaller instance size, you must lower this number."
+}
+
+variable "cloudsql_backup_location" {
+  type    = string
+  default = "us"
+
+  description = "Location in which to backup the database."
+}
+
 variable "generate_cron_schedule" {
   type    = string
   default = "0 0 1 1 0"
@@ -100,8 +114,15 @@ variable "generate_cron_schedule" {
   description = "Schedule to execute the generation service."
 }
 
+variable "generate_regions" {
+  type    = list(string)
+  default = []
+
+  description = "List of regions for which to generate data."
+}
+
 variable "deploy_debugger" {
-  type = bool
+  type    = bool
   default = false
 
   description = "Deploy the service debugger. Use only in testing."
@@ -114,6 +135,20 @@ variable "service_environment" {
   description = "Per-service environment overrides."
 }
 
+variable "exposure_custom_domain" {
+  type    = string
+  default = ""
+
+  description = "Custom domain to map for exposures. This domain must already be verified by Google, and you must have a DNS CNAME record pointing to ghs.googlehosted.com in advance. If not provided, no domain mapping is created."
+}
+
+variable "federationout_custom_domain" {
+  type    = string
+  default = ""
+
+  description = "Custom domain to map for federationin. This domain must already be verified by Google, and you must have a DNS CNAME record pointing to ghs.googlehosted.com in advance. If not provided, no domain mapping is created."
+}
+
 variable "vpc_access_connector_max_throughput" {
   type    = number
   default = 1000
@@ -123,9 +158,8 @@ variable "vpc_access_connector_max_throughput" {
 
 terraform {
   required_providers {
-    google      = "~> 3.24"
-    google-beta = "~> 3.24"
-    null        = "~> 2.1"
-    random      = "~> 2.2"
+    google = "~> 3.32"
+    null   = "~> 2.1"
+    random = "~> 2.3"
   }
 }

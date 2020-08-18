@@ -50,7 +50,6 @@ func TestNewExposureHandler(t *testing.T) {
 
 	for _, tc := range testCases {
 		tc := tc
-
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 
@@ -86,17 +85,17 @@ func TestNewExportHandler(t *testing.T) {
 		err  error
 	}{
 		{
-			name: "nil Database",
+			name: "nil_database",
 			env:  serverenv.New(ctx),
 			err:  fmt.Errorf("missing database in server environment"),
 		},
 		{
-			name: "nil Blobstore",
+			name: "nil_blobstore",
 			env:  serverenv.New(ctx, serverenv.WithDatabase(testDB)),
 			err:  fmt.Errorf("missing blobstore in server environment"),
 		},
 		{
-			name: "Fully Specified",
+			name: "fully_specified",
 			env:  serverenv.New(ctx, serverenv.WithBlobStorage(noopBlobstore), serverenv.WithDatabase(testDB)),
 			err:  nil,
 		},
@@ -104,7 +103,6 @@ func TestNewExportHandler(t *testing.T) {
 
 	for _, tc := range testCases {
 		tc := tc
-
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 
@@ -130,29 +128,34 @@ func TestNewExportHandler(t *testing.T) {
 func TestCutoffDate(t *testing.T) {
 	now := time.Now()
 	for _, test := range []struct {
-		d       time.Duration
-		wantDur time.Duration // if zero, then expect an error
+		name     string
+		d        time.Duration
+		wantDur  time.Duration // if zero, then expect an error
+		override bool
 	}{
-		{216 * time.Hour, 0},                       // 9 days: duration too short
-		{-10 * time.Minute, 0},                     // negative
-		{241 * time.Hour, (10*24 + 1) * time.Hour}, // 10 days, 1 hour: OK
+		{"too_short", 216 * time.Hour, 0, false},                                 // 9 days: duration too short
+		{"negative", -10 * time.Minute, 0, false},                                // negative
+		{"long_enough", 241 * time.Hour, (10*24 + 1) * time.Hour, false},         // 10 days, 1 hour: OK
+		{"too_short_with_override", 216 * time.Hour, (9 * 24) * time.Hour, true}, // too short, but override backstop.
 	} {
-		got, err := cutoffDate(test.d)
-		if test.wantDur == 0 {
-			if err == nil {
-				t.Errorf("%q: got no error, wanted one", test.d)
+		t.Run(test.name, func(t *testing.T) {
+			got, err := cutoffDate(context.Background(), test.d, test.override)
+			if test.wantDur == 0 {
+				if err == nil {
+					t.Errorf("%q: got no error, wanted one", test.d)
+				}
+			} else if err != nil {
+				t.Errorf("%q: got error %v", test.d, err)
+			} else {
+				want := now.Add(-test.wantDur)
+				diff := got.Sub(want)
+				if diff < 0 {
+					diff = -diff
+				}
+				if diff > time.Second {
+					t.Errorf("%q: got %s, want %s", test.d, got, want)
+				}
 			}
-		} else if err != nil {
-			t.Errorf("%q: got error %v", test.d, err)
-		} else {
-			want := now.Add(-test.wantDur)
-			diff := got.Sub(want)
-			if diff < 0 {
-				diff = -diff
-			}
-			if diff > time.Second {
-				t.Errorf("%q: got %s, want %s", test.d, got, want)
-			}
-		}
+		})
 	}
 }

@@ -26,7 +26,12 @@ import (
 	publishdb "github.com/google/exposure-notifications-server/internal/publish/database"
 	publishmodel "github.com/google/exposure-notifications-server/internal/publish/model"
 	"github.com/google/go-cmp/cmp"
+	"github.com/google/go-cmp/cmp/cmpopts"
 	pgx "github.com/jackc/pgx/v4"
+)
+
+var (
+	approxTime = cmp.Options{cmpopts.EquateApproxTime(time.Millisecond * 250)}
 )
 
 func TestAddRetrieveUpdateSignatureInfo(t *testing.T) {
@@ -57,7 +62,6 @@ func TestAddRetrieveUpdateSignatureInfo(t *testing.T) {
 
 	// Update, set expiry timestamp.
 	want.EndTimestamp = time.Now().UTC().Add(24 * time.Hour)
-	want.EndTimestamp = want.EndTimestamp.Truncate(time.Second)
 	if err := exDB.UpdateSignatureInfo(ctx, want); err != nil {
 		t.Fatal(err)
 	}
@@ -67,8 +71,7 @@ func TestAddRetrieveUpdateSignatureInfo(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	got.EndTimestamp = got.EndTimestamp.Truncate(time.Second)
-	if diff := cmp.Diff(want, got); diff != "" {
+	if diff := cmp.Diff(want, got, approxTime); diff != "" {
 		t.Fatalf("mismatch (-want, +got):\n%s", diff)
 	}
 }
@@ -85,13 +88,13 @@ func TestLookupSignatureInfos(t *testing.T) {
 			SigningKey:        "/kms/project/key/version/1",
 			SigningKeyVersion: "1",
 			SigningKeyID:      "310",
-			EndTimestamp:      testTime.Add(-1 * time.Hour).Truncate(time.Microsecond),
+			EndTimestamp:      testTime.Add(-1 * time.Hour),
 		},
 		{
 			SigningKey:        "/kms/project/key/version/2",
 			SigningKeyVersion: "2",
 			SigningKeyID:      "310",
-			EndTimestamp:      testTime.Add(24 * time.Hour).Truncate(time.Microsecond),
+			EndTimestamp:      testTime.Add(24 * time.Hour),
 		},
 		{
 			SigningKey:        "/kms/project/key/version/3",
@@ -114,7 +117,7 @@ func TestLookupSignatureInfos(t *testing.T) {
 	// The first entry (want[0]) is expired and won't be returned.
 	want = want[1:]
 
-	if diff := cmp.Diff(want, got); diff != "" {
+	if diff := cmp.Diff(want, got, approxTime); diff != "" {
 		t.Errorf("mismatch (-want, +got):\n%v", diff)
 	}
 }
@@ -134,6 +137,7 @@ func TestAddGetUpdateExportConfig(t *testing.T) {
 		Period:           3 * time.Hour,
 		OutputRegion:     "i1",
 		InputRegions:     []string{"US"},
+		IncludeTravelers: true,
 		From:             fromTime,
 		Thru:             thruTime,
 		SignatureInfoIDs: []int64{42, 84},
@@ -147,9 +151,7 @@ func TestAddGetUpdateExportConfig(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	want.From = want.From.Truncate(time.Microsecond)
-	want.Thru = want.Thru.Truncate(time.Microsecond)
-	if diff := cmp.Diff(want, got); diff != "" {
+	if diff := cmp.Diff(want, got, approxTime); diff != "" {
 		t.Errorf("mismatch (-want, +got):\n%s", diff)
 	}
 
@@ -167,7 +169,7 @@ func TestAddGetUpdateExportConfig(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if diff := cmp.Diff(want, got); diff != "" {
+	if diff := cmp.Diff(want, got, approxTime); diff != "" {
 		t.Errorf("mismatch (-want, +got):\n%s", diff)
 	}
 }
@@ -242,6 +244,7 @@ func TestBatches(t *testing.T) {
 		From:             now,
 		Thru:             now.Add(time.Hour),
 		SignatureInfoIDs: []int64{1, 2, 3, 4},
+		IncludeTravelers: true,
 	}
 	if err := New(testDB).AddExportConfig(ctx, config); err != nil {
 		t.Fatal(err)
@@ -261,6 +264,7 @@ func TestBatches(t *testing.T) {
 			StartTimestamp:   start,
 			EndTimestamp:     end,
 			SignatureInfoIDs: []int64{1, 2, 3, 4},
+			IncludeTravelers: true,
 		})
 	}
 	if err := New(testDB).AddExportBatches(ctx, batches); err != nil {
@@ -430,6 +434,106 @@ func TestFinalizeBatch(t *testing.T) {
 	}
 }
 
+// TestTravelerKeys ensures traveler keys are pulled in when necessary.
+func TestTravelerKeys(t *testing.T) {
+	t.Parallel()
+
+	testDB := database.NewTestDatabase(t)
+	ctx := context.Background()
+	now := time.Now()
+
+	// Add a config.
+	ec := &model.ExportConfig{
+		BucketName:       "bucket-name",
+		FilenameRoot:     "filename-root",
+		Period:           3600 * time.Second,
+		OutputRegion:     "US",
+		From:             now.Add(-24 * time.Hour),
+		IncludeTravelers: true,
+	}
+	if err := New(testDB).AddExportConfig(ctx, ec); err != nil {
+		t.Fatal(err)
+	}
+
+	// Create a batch for two hours ago to one hour ago.
+	startTimestamp := now.Truncate(time.Hour).Add(-2 * time.Hour)
+	endTimestamp := startTimestamp.Add(time.Hour)
+	eb := &model.ExportBatch{
+		ConfigID:         ec.ConfigID,
+		BucketName:       ec.BucketName,
+		FilenameRoot:     ec.FilenameRoot,
+		StartTimestamp:   startTimestamp,
+		EndTimestamp:     endTimestamp,
+		OutputRegion:     ec.OutputRegion,
+		Status:           model.ExportBatchOpen,
+		IncludeTravelers: ec.IncludeTravelers,
+	}
+	if err := New(testDB).AddExportBatches(ctx, []*model.ExportBatch{eb}); err != nil {
+		t.Fatal(err)
+	}
+
+	// Create traveler key out of the main region.
+	trav := &publishmodel.Exposure{
+		ExposureKey: []byte("aaa"),
+		Regions:     []string{ec.OutputRegion + "A"},
+		CreatedAt:   startTimestamp,
+		Traveler:    true,
+	}
+
+	// Create non traveler key out of the main region.
+	notTrav := &publishmodel.Exposure{
+		ExposureKey: []byte("bbb"),
+		Regions:     []string{ec.OutputRegion + "B"},
+		CreatedAt:   endTimestamp,
+	}
+
+	// Add the keys to the database.
+	if _, err := publishdb.New(testDB).InsertAndReviseExposures(ctx, []*publishmodel.Exposure{trav, notTrav}, nil, true); err != nil {
+		t.Fatal(err)
+	}
+
+	// Re-fetch the ExposureBatch by leasing it; this is important to this test which is trying
+	// to ensure our dates are going in-and-out of the database correctly.
+	leased, err := New(testDB).LeaseBatch(ctx, time.Hour, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Check that the batch times from the database are *exactly* what we started with.
+	if eb.StartTimestamp.UnixNano() != leased.StartTimestamp.UnixNano() {
+		t.Errorf("Start timestamps did not align original: %d, leased: %d", eb.StartTimestamp.UnixNano(), leased.StartTimestamp.UnixNano())
+	}
+	if eb.EndTimestamp.UnixNano() != leased.EndTimestamp.UnixNano() {
+		t.Errorf("End timestamps did not align original: %d, leased: %d", eb.EndTimestamp.UnixNano(), leased.EndTimestamp.UnixNano())
+	}
+
+	// Lookup the keys; they must be only the key created_at the startTimestamp
+	// (because start is inclusive, end is exclusive).
+	criteria := publishdb.IterateExposuresCriteria{
+		IncludeRegions:   []string{leased.OutputRegion},
+		SinceTimestamp:   leased.StartTimestamp,
+		UntilTimestamp:   leased.EndTimestamp,
+		IncludeTravelers: true,
+	}
+
+	var got []*publishmodel.Exposure
+	_, err = publishdb.New(testDB).IterateExposures(ctx, criteria, func(exp *publishmodel.Exposure) error {
+		got = append(got, exp)
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if len(got) != 1 {
+		t.Fatalf("Incorrect exposure key result length, got %d, want 1", len(got))
+	}
+	want := []byte("aaa")
+	if string(got[0].ExposureKey) != string(want) {
+		t.Fatalf("Incorrect exposure key in batch, got %q, want %q", got[0].ExposureKey, want)
+	}
+}
+
 // TestKeysInBatch ensures that keys are fetched in the correct batch when they fall on boundary conditions.
 func TestKeysInBatch(t *testing.T) {
 	t.Parallel()
@@ -481,7 +585,7 @@ func TestKeysInBatch(t *testing.T) {
 	}
 
 	// Add the keys to the database.
-	if err := publishdb.New(testDB).InsertExposures(ctx, []*publishmodel.Exposure{sek, eek}); err != nil {
+	if _, err := publishdb.New(testDB).InsertAndReviseExposures(ctx, []*publishmodel.Exposure{sek, eek}, nil, true); err != nil {
 		t.Fatal(err)
 	}
 

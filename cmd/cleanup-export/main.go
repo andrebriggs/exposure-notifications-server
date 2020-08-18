@@ -21,21 +21,26 @@ import (
 	"net/http"
 
 	"github.com/google/exposure-notifications-server/internal/cleanup"
-	"github.com/google/exposure-notifications-server/internal/interrupt"
-	"github.com/google/exposure-notifications-server/internal/logging"
-	_ "github.com/google/exposure-notifications-server/internal/observability"
-	"github.com/google/exposure-notifications-server/internal/server"
 	"github.com/google/exposure-notifications-server/internal/setup"
+	"github.com/google/exposure-notifications-server/pkg/logging"
+	_ "github.com/google/exposure-notifications-server/pkg/observability"
+	"github.com/google/exposure-notifications-server/pkg/server"
+	"github.com/sethvargo/go-signalcontext"
 )
 
 func main() {
-	ctx, done := interrupt.Context()
-	defer done()
+	ctx, done := signalcontext.OnInterrupt()
 
-	if err := realMain(ctx); err != nil {
-		logger := logging.FromContext(ctx)
+	logger := logging.NewLogger(true)
+	ctx = logging.WithLogger(ctx, logger)
+
+	err := realMain(ctx)
+	done()
+
+	if err != nil {
 		logger.Fatal(err)
 	}
+	logger.Info("successful shutdown")
 }
 
 func realMain(ctx context.Context) error {

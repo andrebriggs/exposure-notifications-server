@@ -25,7 +25,7 @@ import (
 	aamodel "github.com/google/exposure-notifications-server/internal/authorizedapp/model"
 	"github.com/google/exposure-notifications-server/internal/verification/database"
 	"github.com/google/exposure-notifications-server/internal/verification/model"
-	verifyapi "github.com/google/exposure-notifications-server/pkg/api/v1alpha1"
+	verifyapi "github.com/google/exposure-notifications-server/pkg/api/v1"
 	"github.com/google/exposure-notifications-server/pkg/base64util"
 	"github.com/google/exposure-notifications-server/pkg/cache"
 	utils "github.com/google/exposure-notifications-server/pkg/verification"
@@ -48,10 +48,18 @@ func New(db *database.HealthAuthorityDB, config *Config) (*Verifier, error) {
 	return &Verifier{db, cache}, nil
 }
 
+// VerifiedClaims represents the relevant claims extracted from a verified
+// certificate that may need to be applied.
+type VerifiedClaims struct {
+	HealthAuthorityID    int64
+	ReportType           string // blank indicates no report type was present.
+	SymptomOnsetInterval uint32 // 0 indicates no symptom onset interval present. This should be checked for "reasonable" value before application.
+}
+
 // VerifyDiagnosisCertificate accepts a publish request (from which is extracts the JWT),
 // fully verifies the JWT and signture against what the passed in authorrized app is allowed
 // to use. Returns any transmission risk overrides if they are present.
-func (v *Verifier) VerifyDiagnosisCertificate(ctx context.Context, authApp *aamodel.AuthorizedApp, publish *verifyapi.Publish) (verifyapi.TransmissionRiskVector, error) {
+func (v *Verifier) VerifyDiagnosisCertificate(ctx context.Context, authApp *aamodel.AuthorizedApp, publish *verifyapi.Publish) (*VerifiedClaims, error) {
 	// These get assigned during the ParseWithClaims closure.
 	var healthAuthorityID int64
 	var claims *verifyapi.VerificationClaims
@@ -116,6 +124,11 @@ func (v *Verifier) VerifyDiagnosisCertificate(ctx context.Context, authApp *aamo
 		return nil, fmt.Errorf("app %v has not authorized health authority issuer: %v", authApp.AppPackageName, claims.Issuer)
 	}
 
+	// Verify our cutom claim types
+	if err := claims.CustomClaimsValid(); err != nil {
+		return nil, err
+	}
+
 	// Verify the HMAC.
 	jwtHMAC, err := base64util.DecodeString(claims.SignedMAC)
 	if err != nil {
@@ -125,15 +138,24 @@ func (v *Verifier) VerifyDiagnosisCertificate(ctx context.Context, authApp *aamo
 	if err != nil {
 		return nil, fmt.Errorf("error decoding HMAC secret from publish request: %w", err)
 	}
-	wantHMAC, err := utils.CalculateExposureKeyHMAC(publish.Keys, secret)
+	// Allow the HMAC to be calculated without transmission risk values IFF all transmission risks are zero.
+	validHMACs, err := utils.CalculateAllAllowedExposureKeyHMAC(publish.Keys, secret)
 	if err != nil {
 		return nil, fmt.Errorf("calculating expected HMAC: %w", err)
 	}
 
-	if !hmac.Equal(wantHMAC, jwtHMAC) {
+	valid := false
+	for _, wantHMAC := range validHMACs {
+		valid = valid || hmac.Equal(wantHMAC, jwtHMAC)
+	}
+	if !valid {
 		return nil, fmt.Errorf("HMAC mismatch, publish request does not match disgnosis verification certificate")
 	}
 
-	// Everything looks good. Return the transmission override vector.
-	return claims.TransmissionRisks, nil
+	// Everything looks good. Return the relevant verified claims.
+	return &VerifiedClaims{
+		HealthAuthorityID:    healthAuthorityID,
+		ReportType:           claims.ReportType,
+		SymptomOnsetInterval: claims.SymptomOnsetInterval,
+	}, nil
 }

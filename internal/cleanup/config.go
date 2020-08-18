@@ -18,9 +18,9 @@ import (
 	"time"
 
 	"github.com/google/exposure-notifications-server/internal/database"
-	"github.com/google/exposure-notifications-server/internal/observability"
 	"github.com/google/exposure-notifications-server/internal/setup"
 	"github.com/google/exposure-notifications-server/internal/storage"
+	"github.com/google/exposure-notifications-server/pkg/observability"
 	"github.com/google/exposure-notifications-server/pkg/secrets"
 )
 
@@ -41,6 +41,8 @@ type Config struct {
 	Port    string        `env:"PORT, default=8080"`
 	Timeout time.Duration `env:"CLEANUP_TIMEOUT, default=10m"`
 	TTL     time.Duration `env:"CLEANUP_TTL, default=336h"`
+
+	DebugOverrideCleanupMinDuration bool `env:"DEBUG_OVERRIDE_CLEANUP_MIN_DURATION, default=false"`
 }
 
 func (c *Config) BlobstoreConfig() *storage.Config {

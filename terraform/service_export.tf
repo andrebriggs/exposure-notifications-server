@@ -33,8 +33,6 @@ resource "google_service_account_iam_member" "cloudbuild-deploy-export" {
 }
 
 resource "google_secret_manager_secret_iam_member" "export-db" {
-  provider = google-beta
-
   for_each = toset([
     "sslcert",
     "sslkey",
@@ -59,9 +57,24 @@ resource "google_kms_key_ring_iam_member" "export-signerverifier" {
   member      = "serviceAccount:${google_service_account.export.email}"
 }
 
+resource "google_project_iam_member" "export-observability" {
+  for_each = toset([
+    "roles/cloudtrace.agent",
+    "roles/logging.logWriter",
+    "roles/monitoring.metricWriter",
+    "roles/stackdriver.resourceMetadata.writer",
+  ])
+
+  project = var.project
+  role    = each.key
+  member  = "serviceAccount:${google_service_account.export.email}"
+}
+
 resource "google_cloud_run_service" "export" {
   name     = "export"
   location = var.cloudrun_location
+
+  autogenerate_revision_name = true
 
   template {
     spec {
@@ -72,21 +85,19 @@ resource "google_cloud_run_service" "export" {
 
         resources {
           limits = {
-            cpu    = "2"
+            cpu    = "2000m"
             memory = "1G"
           }
         }
 
         dynamic "env" {
-          for_each = local.common_cloudrun_env_vars
-          content {
-            name  = env.value["name"]
-            value = env.value["value"]
-          }
-        }
+          for_each = merge(
+            local.common_cloudrun_env_vars,
 
-        dynamic "env" {
-          for_each = lookup(var.service_environment, "export", {})
+            // This MUST come last to allow overrides!
+            lookup(var.service_environment, "export", {}),
+          )
+
           content {
             name  = env.key
             value = env.value
@@ -113,7 +124,8 @@ resource "google_cloud_run_service" "export" {
 
   lifecycle {
     ignore_changes = [
-      template,
+      template[0].metadata[0].annotations,
+      template[0].spec[0].containers[0].image,
     ]
   }
 }
@@ -141,7 +153,7 @@ resource "google_cloud_scheduler_job" "export-worker" {
   name             = "export-worker"
   region           = var.cloudscheduler_location
   schedule         = "* * * * *"
-  time_zone        = "Etc/UTC"
+  time_zone        = "America/Los_Angeles"
   attempt_deadline = "600s"
 
   retry_config {
@@ -168,7 +180,7 @@ resource "google_cloud_scheduler_job" "export-create-batches" {
   name             = "export-create-batches"
   region           = var.cloudscheduler_location
   schedule         = "*/5 * * * *"
-  time_zone        = "Etc/UTC"
+  time_zone        = "America/Los_Angeles"
   attempt_deadline = "600s"
 
   retry_config {

@@ -33,8 +33,6 @@ resource "google_service_account_iam_member" "cloudbuild-deploy-generate" {
 }
 
 resource "google_secret_manager_secret_iam_member" "generate-db" {
-  provider = google-beta
-
   for_each = toset([
     "sslcert",
     "sslkey",
@@ -47,9 +45,24 @@ resource "google_secret_manager_secret_iam_member" "generate-db" {
   member    = "serviceAccount:${google_service_account.generate.email}"
 }
 
+resource "google_project_iam_member" "generate-observability" {
+  for_each = toset([
+    "roles/cloudtrace.agent",
+    "roles/logging.logWriter",
+    "roles/monitoring.metricWriter",
+    "roles/stackdriver.resourceMetadata.writer",
+  ])
+
+  project = var.project
+  role    = each.key
+  member  = "serviceAccount:${google_service_account.generate.email}"
+}
+
 resource "google_cloud_run_service" "generate" {
   name     = "generate"
   location = var.cloudrun_location
+
+  autogenerate_revision_name = true
 
   template {
     spec {
@@ -60,21 +73,19 @@ resource "google_cloud_run_service" "generate" {
 
         resources {
           limits = {
-            cpu    = "2"
+            cpu    = "2000m"
             memory = "1G"
           }
         }
 
         dynamic "env" {
-          for_each = local.common_cloudrun_env_vars
-          content {
-            name  = env.value["name"]
-            value = env.value["value"]
-          }
-        }
+          for_each = merge(
+            local.common_cloudrun_env_vars,
 
-        dynamic "env" {
-          for_each = lookup(var.service_environment, "generate", {})
+            // This MUST come last to allow overrides!
+            lookup(var.service_environment, "generate", {}),
+          )
+
           content {
             name  = env.key
             value = env.value
@@ -99,7 +110,8 @@ resource "google_cloud_run_service" "generate" {
 
   lifecycle {
     ignore_changes = [
-      template,
+      template[0].metadata[0].annotations,
+      template[0].spec[0].containers[0].image,
     ]
   }
 }
@@ -123,10 +135,14 @@ resource "google_cloud_run_service_iam_member" "generate-invoker" {
   member   = "serviceAccount:${google_service_account.generate-invoker.email}"
 }
 
+locals {
+  generate_uri = length(var.generate_regions) > 0 ? "${google_cloud_run_service.generate.status.0.url}/?region=${join(",", var.generate_regions)}" : "${google_cloud_run_service.generate.status.0.url}/"
+}
+
 resource "google_cloud_scheduler_job" "generate-worker" {
   name             = "generate-worker"
   schedule         = var.generate_cron_schedule
-  time_zone        = "Etc/UTC"
+  time_zone        = "America/Los_Angeles"
   attempt_deadline = "60s"
 
   retry_config {
@@ -135,7 +151,7 @@ resource "google_cloud_scheduler_job" "generate-worker" {
 
   http_target {
     http_method = "GET"
-    uri         = "${google_cloud_run_service.generate.status.0.url}/"
+    uri         = local.generate_uri
     oidc_token {
       audience              = google_cloud_run_service.generate.status.0.url
       service_account_email = google_service_account.generate-invoker.email

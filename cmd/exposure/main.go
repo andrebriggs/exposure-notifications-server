@@ -20,22 +20,27 @@ import (
 	"fmt"
 	"net/http"
 
-	"github.com/google/exposure-notifications-server/internal/interrupt"
-	"github.com/google/exposure-notifications-server/internal/logging"
-	_ "github.com/google/exposure-notifications-server/internal/observability"
 	"github.com/google/exposure-notifications-server/internal/publish"
-	"github.com/google/exposure-notifications-server/internal/server"
 	"github.com/google/exposure-notifications-server/internal/setup"
+	"github.com/google/exposure-notifications-server/pkg/logging"
+	_ "github.com/google/exposure-notifications-server/pkg/observability"
+	"github.com/google/exposure-notifications-server/pkg/server"
+	"github.com/sethvargo/go-signalcontext"
 )
 
 func main() {
-	ctx, done := interrupt.Context()
-	defer done()
+	ctx, done := signalcontext.OnInterrupt()
 
-	if err := realMain(ctx); err != nil {
-		logger := logging.FromContext(ctx)
+	logger := logging.NewLogger(true)
+	ctx = logging.WithLogger(ctx, logger)
+
+	err := realMain(ctx)
+	done()
+
+	if err != nil {
 		logger.Fatal(err)
 	}
+	logger.Info("successful shutdown")
 }
 
 func realMain(ctx context.Context) error {
@@ -48,13 +53,16 @@ func realMain(ctx context.Context) error {
 	}
 	defer env.Close(ctx)
 
+	mux := http.NewServeMux()
 	handler, err := publish.NewHandler(ctx, &config, env)
 	if err != nil {
 		return fmt.Errorf("publish.NewHandler: %w", err)
 	}
-
-	mux := http.NewServeMux()
-	mux.Handle("/", handler)
+	// Serving of v1alpha1 is on by default, but can be disabled through env var.
+	if config.EnableV1Alpha1API {
+		mux.Handle("/", handler.HandleV1Alpha1())
+	}
+	mux.Handle("/v1/publish", handler.Handle())
 
 	srv, err := server.New(config.Port)
 	if err != nil {

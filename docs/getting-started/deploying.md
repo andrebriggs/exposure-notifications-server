@@ -42,6 +42,7 @@ options. Configuration options are specified via environment variables.
 | federation-in    | cmd/federation-in    | Pulls federation results from federation partners |
 | federation-out   | cmd/federation-out   | gRPC federation requests listener |
 | generate         | cmd/generate         | Sample service that generates data |
+| key-rotation     | cmd/key-rotation     | Generates new revision keys and retires old ones |
 
 
 ## Before you begin
@@ -160,7 +161,7 @@ To enable distributed tracing, please ensure your environment has these variable
 Variable|Values|Comment
 ---|---|---
 OBSERVABILITY_EXPORTER|If unset, no exporting shall be done. Use any of "stackdriver", "prometheus", or "ocagent" otherwise|Note: when using "prometheus" a METRICS_PORT environment variable should also be set
-PROJECT_ID|The ProjectID of your associated Google Cloud Platform project on which this application shall be deployed|Required if you use "stackdrver"
+PROJECT_ID|The ProjectID of your associated Google Cloud Platform project on which this application shall be deployed|Required if you use "stackdriver"
 
 ## Running migrations
 

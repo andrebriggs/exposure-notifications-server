@@ -26,7 +26,7 @@ import (
 	"github.com/google/exposure-notifications-server/internal/export/model"
 	publishmodel "github.com/google/exposure-notifications-server/internal/publish/model"
 
-	"github.com/google/exposure-notifications-server/internal/logging"
+	"github.com/google/exposure-notifications-server/pkg/logging"
 )
 
 // handleCreateBatches is a handler to iterate the rows of ExportConfig and
@@ -128,6 +128,7 @@ func (s *Server) maybeCreateBatches(ctx context.Context, ec *model.ExportConfig,
 			EndTimestamp:     br.end,
 			OutputRegion:     ec.OutputRegion,
 			InputRegions:     ec.InputRegions,
+			IncludeTravelers: ec.IncludeTravelers,
 			Status:           model.ExportBatchOpen,
 			SignatureInfoIDs: infoIds,
 		})

@@ -17,71 +17,174 @@ package model
 
 import (
 	"context"
+	"encoding/base64"
 	"fmt"
+	"math"
 	"sort"
 	"strings"
 	"time"
 
-	"github.com/google/exposure-notifications-server/internal/logging"
+	"github.com/google/exposure-notifications-server/internal/verification"
 	"github.com/google/exposure-notifications-server/pkg/base64util"
+	"github.com/google/exposure-notifications-server/pkg/logging"
+	"github.com/hashicorp/go-multierror"
 
-	verifyapi "github.com/google/exposure-notifications-server/pkg/api/v1alpha1"
+	verifyapi "github.com/google/exposure-notifications-server/pkg/api/v1"
 )
 
-// ApplyTransmissionRiskOverrides modifies the transmission risk values in the publish request
-// based on the provided TransmissionRiskVector.
-// In the live system, the TransmissionRiskVector values come from a trusted public health authority
-// and are embedded in the verification certificate (JWT) transmitted on the publish request.
-func ApplyTransmissionRiskOverrides(p *verifyapi.Publish, overrides verifyapi.TransmissionRiskVector) {
-	if len(overrides) == 0 {
-		return
-	}
-	// The default sort order for TransmissionRiskVector is descending by SinceRollingPeriod.
-	sort.Sort(overrides)
-	// Sort the keys with the largest start interval first (descending), same as overrides.
-	sort.Slice(p.Keys, func(i int, j int) bool {
-		return p.Keys[i].IntervalNumber > p.Keys[j].IntervalNumber
-	})
-
-	overrideIdx := 0
-	for i, eKey := range p.Keys {
-		// Advance the overrideIdx until the current key is covered or we exhaust the
-		// override index.
-		for overrideIdx < len(overrides) &&
-			eKey.IntervalNumber+eKey.IntervalCount <= overrides[overrideIdx].SinceRollingPeriod {
-			overrideIdx++
-		}
-
-		// If we've run out of overrides to apply, then we have to break free.
-		if overrideIdx >= len(overrides) {
-			break
-		}
-
-		// Check to see if this key is in the current override.
-		// If the key was EVERY valid during the SinceRollingPeriod then the override applies.
-		if eKey.IntervalNumber+eKey.IntervalCount >= overrides[overrideIdx].SinceRollingPeriod {
-			p.Keys[i].TransmissionRisk = overrides[overrideIdx].TranismissionRisk
-			// don't advance overrideIdx, there might be additional keys in this override.
-		}
-	}
-}
+var (
+	// ErrorExposureKeyMismatch - internal coding error, tried to revise key A by passing in key B
+	ErrorExposureKeyMismatch = fmt.Errorf("attempted to revise a key with a different key")
+	// ErrorNonLocalProvenance - key revesion attempted on federated key, which is not allowed
+	ErrorNonLocalProvenance = fmt.Errorf("key not origionally uploaded to this server, cannot revise")
+	// ErrorKeyAlreadyRevised - attempt to revise a key that has already been revised.
+	ErrorKeyAlreadyRevised = fmt.Errorf("key has already been revised and cannot be revised again")
+)
 
 // Exposure represents the record as stored in the database
-// TODO(mikehelmick) - refactor this so that there is a public
-// Exposure struct that doesn't have public fields and an
-// internal struct that does. Separate out the database model
-// from direct access.
-// Mark records as writable/nowritable - is exposure key encrypted.
 type Exposure struct {
 	ExposureKey      []byte
 	TransmissionRisk int
 	AppPackageName   string
 	Regions          []string
+	Traveler         bool
 	IntervalNumber   int32
 	IntervalCount    int32
 	CreatedAt        time.Time
 	LocalProvenance  bool
 	FederationSyncID int64
+
+	// These fields are nullable to maintain backwards compatibility with
+	// older versions that predate their existence.
+	HealthAuthorityID     *int64
+	ReportType            string
+	DaysSinceSymptomOnset *int32
+
+	// Fields to support key revision.
+	RevisedReportType            *string
+	RevisedAt                    *time.Time
+	RevisedDaysSinceSymptomOnset *int32
+	RevisedTransmissionRisk      *int
+
+	// b64 key
+	base64Key string
+}
+
+// Revise updates the Revised fields of a key
+func (e *Exposure) Revise(in *Exposure) (bool, error) {
+	if e.ExposureKeyBase64() != in.ExposureKeyBase64() {
+		return false, ErrorExposureKeyMismatch
+	}
+	// key doesn't need to be revised if there is no change.
+	if e.ReportType == in.ReportType {
+		return false, nil
+	}
+	if !e.LocalProvenance {
+		return false, ErrorNonLocalProvenance
+	}
+	// make sure key hasn't been revised already.
+	if e.RevisedAt != nil {
+		return false, ErrorKeyAlreadyRevised
+	}
+
+	// Check to see if this is a valid transition.
+	eReportType := e.ReportType
+	if eReportType == "" {
+		eReportType = verifyapi.ReportTypeClinical
+	}
+	if !(eReportType == verifyapi.ReportTypeClinical && (in.ReportType == verifyapi.ReportTypeConfirmed || in.ReportType == verifyapi.ReportTypeNegative)) {
+		return false, fmt.Errorf("invalid report type transition, cannot transition from '%v' to '%v'", e.ReportType, in.ReportType)
+	}
+
+	// Update fields.
+	// Key is potentially revised by a different health authority.
+	e.HealthAuthorityID = in.HealthAuthorityID
+	// If there are new regions in the incoming version, add them to the previous on.
+	// Regions are not removed however.
+	e.AddMissingRegions(in.Regions)
+	e.RevisedReportType = &in.ReportType
+	e.RevisedAt = &in.CreatedAt
+	e.RevisedDaysSinceSymptomOnset = in.DaysSinceSymptomOnset
+	tr := ReportTypeTransmissionRisk(in.ReportType, in.TransmissionRisk)
+	e.RevisedTransmissionRisk = &tr
+
+	return true, nil
+}
+
+// AddMissingRegions will merge the input regions into the regions already on the exposure.
+// Set union operation.
+func (e *Exposure) AddMissingRegions(regions []string) {
+	m := make(map[string]struct{})
+	for _, r := range e.Regions {
+		m[r] = struct{}{}
+	}
+	for _, r := range regions {
+		if _, ok := m[r]; !ok {
+			m[r] = struct{}{}
+			e.Regions = append(e.Regions, r)
+		}
+	}
+}
+
+// HasDaysSinceSymptomOnset returns true if the this key has the days since
+// symptom onset field is et.
+func (e *Exposure) HasDaysSinceSymptomOnset() bool {
+	return e.DaysSinceSymptomOnset != nil
+}
+
+// SetDaysSinceSymptomOnset sets the days since sympton onset field, possibly
+// allocating a new pointer.
+func (e *Exposure) SetDaysSinceSymptomOnset(d int32) {
+	e.DaysSinceSymptomOnset = &d
+}
+
+// HasHealthAuthorityID returns true if this Exposure has a health authority ID.
+func (e *Exposure) HasHealthAuthorityID() bool {
+	return e.HealthAuthorityID != nil
+}
+
+// SetHealthAuthorityID assigned a health authority ID. Typically done during transform.
+func (e *Exposure) SetHealthAuthorityID(haID int64) {
+	e.HealthAuthorityID = &haID
+}
+
+// HasBeenRevised returns true if this key has been revised. This is indicauted
+// by the RevisedAt time not being nil.
+func (e *Exposure) HasBeenRevised() bool {
+	return e.RevisedAt != nil
+}
+
+// SetRevisedAt will set the revision time on this Exposure. The RevisedAt timestamp
+// can only be set once. Attempting to set it again will result in an error.
+func (e *Exposure) SetRevisedAt(t time.Time) error {
+	if e.RevisedAt != nil {
+		return fmt.Errorf("exposure key has already been revised and cannot be revised again")
+	}
+	e.RevisedAt = &t
+	return nil
+}
+
+// SetRevisedReportType will set the revised report type.
+func (e *Exposure) SetRevisedReportType(rt string) {
+	e.RevisedReportType = &rt
+}
+
+// SetRevisedDaysSinceSymptomOnset will set the revised days since symptom onset.
+func (e *Exposure) SetRevisedDaysSinceSymptomOnset(d int32) {
+	e.RevisedDaysSinceSymptomOnset = &d
+}
+
+// SetRevisedTransmissionRisk will set the revised transmission risk.
+func (e *Exposure) SetRevisedTransmissionRisk(tr int) {
+	e.RevisedTransmissionRisk = &tr
+}
+
+// ExposureKeyBase64 returns the ExposuerKey property base64 encoded.
+func (e *Exposure) ExposureKeyBase64() string {
+	if e.base64Key == "" {
+		e.base64Key = base64.StdEncoding.EncodeToString(e.ExposureKey)
+	}
+	return e.base64Key
 }
 
 // IntervalNumber calculates the exposure notification system interval
@@ -101,29 +204,69 @@ func TimeForIntervalNumber(interval int32) time.Time {
 	return time.Unix(int64(verifyapi.IntervalLength.Seconds())*int64(interval), 0)
 }
 
+// DaysFromSymptomOnset calculates the number of days between two start intervals.
+// Partial days are rounded up/down to the closest day.
+// If the checkInterval is before the onsetInterval, number of days will be negative.
+func DaysFromSymptomOnset(onsetInterval int32, checkInterval int32) int32 {
+	distance := checkInterval - onsetInterval
+	days := distance / verifyapi.MaxIntervalCount
+	// if the days don't divide evenly, round (up or down) to the closest even day.
+	if rem := distance % verifyapi.MaxIntervalCount; rem != 0 {
+		// remainder of negative number is negative in go. So if the ABS is more than
+		// half a day, adjust the day count.
+		if math.Abs(float64(rem)) > verifyapi.MaxIntervalCount/2 {
+			// Account for the fact that if day is 0 and rem is > half a day, sign of rem matters.
+			if days < 0 || rem < 0 {
+				days--
+			} else {
+				days++
+			}
+		}
+	}
+	return days
+}
+
+// TransformerConfig defines the interface that is needed to configure a `Transformer`
+type TransformerConfig interface {
+	MaxExposureKeys() uint
+	MaxSameDayKeys() uint
+	MaxIntervalStartAge() time.Duration
+	TruncateWindow() time.Duration
+	MaxSymptomOnsetDays() uint
+	DebugReleaseSameDayKeys() bool
+}
+
 // Transformer represents a configured Publish -> Exposure[] transformer.
 type Transformer struct {
-	maxExposureKeys     int
+	maxExposureKeys     int           // Overall maximum number of keys.
+	maxSameDayKeys      int           // Number of keys that are allowed to have the same start interval.
 	maxIntervalStartAge time.Duration // How many intervals old does this server accept?
 	truncateWindow      time.Duration
-	debugReleaseSameDay bool // If true, still valid keys are not embargoed.
+	maxSymptomOnsetDays float64 // to avoid casting in comparisons
+	debugReleaseSameDay bool    // If true, still valid keys are not embargoed.
 }
 
 // NewTransformer creates a transformer for turning publish API requests into
 // records for insertion into the database. On the call to TransformPublish
 // all data is validated according to the transformer that is used.
-func NewTransformer(maxExposureKeys int, maxIntervalStartAge time.Duration, truncateWindow time.Duration, releaseSameDayKeys bool) (*Transformer, error) {
-	if maxExposureKeys <= 0 {
-		return nil, fmt.Errorf("maxExposureKeys must be > 0, got %v", maxExposureKeys)
+func NewTransformer(config TransformerConfig) (*Transformer, error) {
+	if config.MaxExposureKeys() <= 0 {
+		return nil, fmt.Errorf("maxExposureKeys must be > 0, got %v", config.MaxExposureKeys())
+	}
+	if config.MaxSameDayKeys() < 1 {
+		return nil, fmt.Errorf("maxSameDayKeys must be >= 1, got %v", config.MaxSameDayKeys())
 	}
 	return &Transformer{
-		maxExposureKeys:     maxExposureKeys,
-		maxIntervalStartAge: maxIntervalStartAge,
-		truncateWindow:      truncateWindow,
-		debugReleaseSameDay: releaseSameDayKeys,
+		maxExposureKeys:     int(config.MaxExposureKeys()),
+		maxSameDayKeys:      int(config.MaxSameDayKeys()),
+		maxIntervalStartAge: config.MaxIntervalStartAge(),
+		truncateWindow:      config.TruncateWindow(),
+		maxSymptomOnsetDays: float64(config.MaxSymptomOnsetDays()),
+		debugReleaseSameDay: config.DebugReleaseSameDayKeys(),
 	}, nil
 }
 
+// KeyTransform represents the settings to apply when transforming an individual key on a publish request.
 type KeyTransform struct {
 	MinStartInterval      int32
 	MaxStartInterval      int32
@@ -137,9 +280,8 @@ type KeyTransform struct {
 // Validations during the transform include:
 //
 // * exposure keys are exactly 16 bytes in length after base64 decoding
-// * minInterval <= interval number <= maxInterval
+// * minInterval <= interval number +intervalCount <= maxInterval
 // * MinIntervalCount <= interval count <= MaxIntervalCount
-//
 func TransformExposureKey(exposureKey verifyapi.ExposureKey, appPackageName string, upcaseRegions []string, settings *KeyTransform) (*Exposure, error) {
 	binKey, err := base64util.DecodeString(exposureKey.Key)
 	if err != nil {
@@ -154,9 +296,9 @@ func TransformExposureKey(exposureKey verifyapi.ExposureKey, appPackageName stri
 		return nil, fmt.Errorf("invalid interval count, %v, must be >= %v && <= %v", ic, verifyapi.MinIntervalCount, verifyapi.MaxIntervalCount)
 	}
 
-	// Validate the IntervalNumber.
-	if exposureKey.IntervalNumber < settings.MinStartInterval {
-		return nil, fmt.Errorf("interval number %v is too old, must be >= %v", exposureKey.IntervalNumber, settings.MinStartInterval)
+	// Validate the IntervalNumber, if the key was ever valid during this period, we'll accept it.
+	if validUntil := exposureKey.IntervalNumber + exposureKey.IntervalCount; validUntil <= settings.MinStartInterval {
+		return nil, fmt.Errorf("key expires before minimum window; %v + %v = %v which is too old, must be >= %v", exposureKey.IntervalNumber, exposureKey.IntervalCount, validUntil, settings.MinStartInterval)
 	}
 	if exposureKey.IntervalNumber > settings.MaxStartInterval {
 		return nil, fmt.Errorf("interval number %v is in the future, must be <= %v", exposureKey.IntervalNumber, settings.MaxStartInterval)
@@ -165,7 +307,7 @@ func TransformExposureKey(exposureKey verifyapi.ExposureKey, appPackageName stri
 	createdAt := settings.CreatedAt
 	// If the key is valid beyond the current interval number. Adjust the createdAt time for the key.
 	if exposureKey.IntervalNumber+exposureKey.IntervalCount > settings.MaxStartInterval {
-		// key is still valid. The created At for this key needs to be adjusted unless debuggin is enabled.
+		// key is still valid. The created At for this key needs to be adjusted unless debugging is enabled.
 		if !settings.ReleaseStillValidKeys {
 			createdAt = TimeForIntervalNumber(exposureKey.IntervalNumber + exposureKey.IntervalCount).Truncate(settings.BatchWindow)
 		}
@@ -187,23 +329,93 @@ func TransformExposureKey(exposureKey verifyapi.ExposureKey, appPackageName stri
 	}, nil
 }
 
+// ReviseKeys takes a set of existing keys, and a list of keys currently being uploaded.
+// Only keys that need to be revsised or are being created fir the first time
+// are returned in the output set.
+func ReviseKeys(ctx context.Context, existing map[string]*Exposure, incoming []*Exposure) ([]*Exposure, error) {
+	//logger := logging.FromContext(ctx)
+	output := make([]*Exposure, 0, len(incoming))
+
+	// Iterate over incoming keys.
+	// If the key already exists
+	//  - determine if it needs to be revised, revise it, put in output.
+	//  - if it doesn't need to be revised (nochange), don't put in putput
+	// New keys, throw it in the output list. Party on.
+	for _, inExposure := range incoming {
+		prevExposure, ok := existing[inExposure.ExposureKeyBase64()]
+		if !ok {
+			output = append(output, inExposure)
+			continue
+		}
+
+		// Attempt to revise this key.
+		keyRevised, err := prevExposure.Revise(inExposure)
+		if err != nil {
+			return nil, err
+		}
+		if !keyRevised {
+			// key hasn't changed, carry on.
+			continue
+		}
+		// Revision worked, add the revised key to the output list.
+		output = append(output, prevExposure)
+	}
+
+	return output, nil
+}
+
+// ReportTypeTransmissionRisk will calculate the backfill, default Transmission Risk.
+// If there is a provided transmission risk that is non-zero, that will be used, otherwise
+// this mapping is used:
+// * Confirmed Test -> 2
+// * Clinical Diagnosis -> 4
+// * Negative -> 6
+// See constants defined in
+// pkg/api/v1alpha1/verification_types.go
+func ReportTypeTransmissionRisk(reportType string, providedTR int) int {
+	// If the client provided a transmission risk, we'll use that.
+	if providedTR != 0 {
+		return providedTR
+	}
+	// Otherwise this value needs to be backfilled for verifyapi.0 clients.
+	switch reportType {
+	case verifyapi.ReportTypeConfirmed:
+		return verifyapi.TransmissionRiskConfirmedStandard
+	case verifyapi.ReportTypeClinical:
+		return verifyapi.TransmissionRiskClinical
+	case verifyapi.ReportTypeNegative:
+		return verifyapi.TransmissionRiskNegative
+	}
+	return verifyapi.TransmissionRiskUnknown
+}
+
 // TransformPublish converts incoming key data to a list of exposure entities.
 // The data in the request is validated during the transform, including:
 //
 // * 0 exposure Keys in the requests
 // * > Transformer.maxExposureKeys in the request
 //
-func (t *Transformer) TransformPublish(ctx context.Context, inData *verifyapi.Publish, batchTime time.Time) ([]*Exposure, error) {
+func (t *Transformer) TransformPublish(ctx context.Context, inData *verifyapi.Publish, regions []string, claims *verification.VerifiedClaims, batchTime time.Time) ([]*Exposure, error) {
+	logger := logging.FromContext(ctx)
 	if t.debugReleaseSameDay {
-		logging.FromContext(ctx).Errorf("DEBUG SERVER - Current day keys are not being embargoed.")
+		logger.Errorf("DEBUG SERVER - Current day keys are not being embargoed.")
 	}
 
 	// Validate the number of keys that want to be published.
 	if len(inData.Keys) == 0 {
-		return nil, fmt.Errorf("no exposure keys in publish request")
+		msg := "no exposure keys in publish request"
+		logger.Debugf(msg)
+		return nil, fmt.Errorf(msg)
 	}
 	if len(inData.Keys) > t.maxExposureKeys {
-		return nil, fmt.Errorf("too many exposure keys in publish: %v, max of %v is allowed", len(inData.Keys), t.maxExposureKeys)
+		msg := fmt.Sprintf("too many exposure keys in publish: %v, max of %v is allowed", len(inData.Keys), t.maxExposureKeys)
+		logger.Debugf(msg)
+		return nil, fmt.Errorf(msg)
+	}
+
+	onsetInterval := inData.SymptomOnsetInterval
+	if claims != nil && claims.SymptomOnsetInterval > 0 {
+		onsetInterval = int32(claims.SymptomOnsetInterval)
 	}
 
 	defaultCreatedAt := TruncateWindow(batchTime, t.truncateWindow)
@@ -225,38 +437,92 @@ func (t *Transformer) TransformPublish(ctx context.Context, inData *verifyapi.Pu
 	// There is no set of "valid" regions overall, but it is defined
 	// elsewhere by what regions an authorized application may write to.
 	// See `authorizedapp.Config`
-	upcaseRegions := make([]string, len(inData.Regions))
-	for i, r := range inData.Regions {
+	upcaseRegions := make([]string, len(regions))
+	for i, r := range regions {
 		upcaseRegions[i] = strings.ToUpper(r)
 	}
 
-	for _, exposureKey := range inData.Keys {
-		exposure, err := TransformExposureKey(exposureKey, inData.AppPackageName, upcaseRegions, &settings)
+	var transformErrors *multierror.Error
+	for i, exposureKey := range inData.Keys {
+		exposure, err := TransformExposureKey(exposureKey, inData.HealthAuthorityID, upcaseRegions, &settings)
 		if err != nil {
-			return nil, fmt.Errorf("invalid publish data: %v", err)
+			logger.Debugf("individual key transform failed: %v", err)
+			transformErrors = multierror.Append(transformErrors, fmt.Errorf("key %d cannot be imported: %w", i, err))
+			continue
 		}
+		// If there are verified claims, apply to this key.
+		if claims != nil {
+			if claims.ReportType != "" {
+				exposure.ReportType = claims.ReportType
+			}
+			exposure.TransmissionRisk = ReportTypeTransmissionRisk(claims.ReportType, exposure.TransmissionRisk)
+			if claims.HealthAuthorityID > 0 {
+				exposure.SetHealthAuthorityID(claims.HealthAuthorityID)
+			}
+		}
+		// Set days since onset, either from the API or from the verified claims (see above).
+		if onsetInterval > 0 {
+			daysSince := DaysFromSymptomOnset(onsetInterval, exposure.IntervalNumber)
+			if math.Abs(float64(daysSince)) < t.maxSymptomOnsetDays {
+				exposure.SetDaysSinceSymptomOnset(daysSince)
+			}
+		}
+		exposure.Traveler = inData.Traveler
 		entities = append(entities, exposure)
 	}
 
-	// Ensure that the uploaded keys are for a consecutive time period. No
-	// overlaps and no gaps.
-	// 1) Sort by interval number.
+	if len(entities) == 0 {
+		// All keys in the batch are valid.
+		return nil, transformErrors.ErrorOrNil()
+	}
+
+	// Validate the uploaded data meets configuration parameters.
+	// In verifyapi.5+, it is possible to have multiple keys that overlap. They
+	// take the form of the same start interval with variable rolling period numbers.
+	// Sort by interval number to make necessary checks easier.
 	sort.Slice(entities, func(i int, j int) bool {
+		if entities[i].IntervalNumber == entities[j].IntervalNumber {
+			return entities[i].IntervalCount < entities[j].IntervalCount
+		}
 		return entities[i].IntervalNumber < entities[j].IntervalNumber
 	})
-	// 2) Walk the slice and verify no gaps/overlaps.
-	// We know the slice isn't empty, seed w/ the first interval.
-	nextInterval := entities[0].IntervalNumber
+	// Check that any overlapping keys meet configuration.
+	// Overlapping keys must have the same start interval. And there is a max number
+	// of "same day" keys that are allowed.
+	// We do not enforce that keys have UTC midnight aligned start intervals.
+
+	// Running count of start intervals.
+	startIntervals := make(map[int32]int)
+	lastInterval := entities[0].IntervalNumber
+	nextInterval := entities[0].IntervalNumber + entities[0].IntervalCount
+
 	for _, ex := range entities {
-		if ex.IntervalNumber < nextInterval {
-			if t.debugReleaseSameDay {
-				logging.FromContext(ctx).Errorf("exposure keys have overlapping intervals")
-				break
-			}
-			return nil, fmt.Errorf("exposure keys have overlapping intervals")
+		// Relies on the default value of 0 for the map value type.
+		startIntervals[ex.IntervalNumber] = startIntervals[ex.IntervalNumber] + 1
+
+		if ex.IntervalNumber == lastInterval {
+			// OK, overlaps by start interval. But move out the nextInterval
+			nextInterval = ex.IntervalNumber + ex.IntervalCount
+			continue
 		}
+
+		if ex.IntervalNumber < nextInterval {
+			msg := fmt.Sprintf("exposure keys have non aligned overlapping intervals. %v overlaps with previous key that is good from %v to %v.", ex.IntervalNumber, lastInterval, nextInterval)
+			logger.Debugf(msg)
+			return nil, fmt.Errorf(msg)
+		}
+		// OK, current key starts at or after the end of the previous one. Advance both variables.
+		lastInterval = ex.IntervalNumber
 		nextInterval = ex.IntervalNumber + ex.IntervalCount
 	}
 
-	return entities, nil
+	for k, v := range startIntervals {
+		if v > t.maxSameDayKeys {
+			msg := fmt.Sprintf("too many overlapping keys for start interval: %v want: <= %v, got: %v", k, t.maxSameDayKeys, v)
+			logger.Debugf(msg)
+			return nil, fmt.Errorf(msg)
+		}
+	}
+
+	return entities, transformErrors.ErrorOrNil()
 }
